@@ -6,3 +6,6 @@ config :cream, Test.Cluster,
 
 config :logger,
   level: :info
+
+config :cream, Cream.Test.Client,
+  server: "localhost:11211"
