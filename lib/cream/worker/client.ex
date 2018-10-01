@@ -37,16 +37,12 @@ defmodule Cream.Worker.Client do
     {:reply, response, state}
   end
 
-  def handle_call({:get, keys, _options}, _from, state) do
-    keys_string = Enum.join(keys, " ")
-    socket_send(state.socket, "get #{keys_string}\r\n")
-    {:reply, recv_values(state.socket), state}
+  def handle_call({:get, keys, options}, _from, state) do
+    retrieve("get", keys, options, state)
   end
 
-  def handle_call({:gets, keys, _options}, _from, state) do
-    keys_string = Enum.join(keys, " ")
-    socket_send(state.socket, "gets #{keys_string}\r\n")
-    {:reply, recv_values(state.socket), state}
+  def handle_call({:gets, keys, options}, _from, state) do
+    retrieve("gets", keys, options, state)
   end
 
   def handle_call({:delete, key}, _from, state) do
@@ -75,6 +71,13 @@ defmodule Cream.Worker.Client do
     end
   end
 
+  defp retrieve(cmd, keys, options, state) do
+    options = Keyword.merge(state.options, options)
+    keys_string = Enum.join(keys, " ")
+    socket_send(state.socket, "#{cmd} #{keys_string}\r\n")
+    {:reply, recv_values(state.socket, options[:coder]), state}
+  end
+
   defp build_store_command(cmd, key, value, options) do
     flags = 0
     exptime = options[:ttl]
@@ -97,12 +100,13 @@ defmodule Cream.Worker.Client do
     "#{command}\r\n#{value}\r\n"
   end
 
-  defp recv_values(socket, values \\ %{}) do
+  defp recv_values(socket, coder, values \\ %{}) do
     with {:ok, line} <- recv_line(socket),
-      {:ok, key, value} <- recv_value(socket, line)
+      {:ok, key, flags, value} <- recv_value(socket, line)
     do
+      value = decode(flags, value, coder)
       values = Map.put(values, key, value)
-      recv_values(socket, values)
+      recv_values(socket, coder, values)
     else
       :end -> {:ok, values}
       error -> error
@@ -112,14 +116,14 @@ defmodule Cream.Worker.Client do
   defp recv_value(socket, line) do
     case String.split(line, " ") do
       ["END"] -> :end
-      ["VALUE", key, _flags, bytes, cas] ->
+      ["VALUE", key, flags, bytes, cas] ->
         case recv_bytes(socket, bytes) do
-          {:ok, value} -> {:ok, key, {value, cas}}
+          {:ok, value} -> {:ok, key, flags, {value, cas}}
           error -> error
         end
-      ["VALUE", key, _flags, bytes] ->
+      ["VALUE", key, flags, bytes] ->
         case recv_bytes(socket, bytes) do
-          {:ok, value} -> {:ok, key, value}
+          {:ok, value} -> {:ok, key, flags, value}
           error -> error
         end
     end
@@ -152,5 +156,12 @@ defmodule Cream.Worker.Client do
 
   defp atomize_line({:ok, line}), do: {:ok, line |> String.downcase |> String.to_atom}
   defp atomize_line(error), do: error
+
+  defp decode(_flags, value, nil), do: value
+  defp decode(flags, value, coder) do
+    flags
+    |> String.to_integer
+    |> coder.decode(value)
+  end
 
 end
