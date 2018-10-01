@@ -16,26 +16,34 @@ defmodule Cream.Worker.Client do
     end
   end
 
-  def handle_call({:store, cmd, key, value, options}, _from, state) do
-    flags   = options[:flags] || 0
-    exptime = options[:ttl]
-    cas     = options[:cas]
-    bytes   = byte_size(value)
+  def handle_call({:store, "mset", keys_and_values, options}, _from, state) do
+    options = Keyword.put(options, :noreply, true)
 
-    command = build_store_command(cmd, key, flags, exptime, bytes, cas, value)
+    command =
+      keys_and_values
+      |> Stream.map(fn {key, value} -> build_store_command("set", key, value, options) end)
+      |> Enum.join
+
+    socket_send(state.socket, command)
+
+    {:reply, {:ok, :stored}, state}
+  end
+
+  def handle_call({:store, cmd, {key, value}, options}, _from, state) do
+    command = build_store_command(cmd, key, value, options)
     socket_send(state.socket, command)
     response = recv_line(state.socket) |> atomize_line
 
     {:reply, response, state}
   end
 
-  def handle_call({:get, keys, options}, _from, state) do
+  def handle_call({:get, keys, _options}, _from, state) do
     keys_string = Enum.join(keys, " ")
     socket_send(state.socket, "get #{keys_string}\r\n")
     {:reply, recv_values(state.socket), state}
   end
 
-  def handle_call({:gets, keys, options}, _from, state) do
+  def handle_call({:gets, keys, _options}, _from, state) do
     keys_string = Enum.join(keys, " ")
     socket_send(state.socket, "gets #{keys_string}\r\n")
     {:reply, recv_values(state.socket), state}
@@ -67,12 +75,26 @@ defmodule Cream.Worker.Client do
     end
   end
 
-  defp build_store_command("cas", key, flags, exptime, bytes, cas, value) do
-    "cas #{key} #{flags} #{exptime} #{bytes} #{cas}\r\n#{value}\r\n"
-  end
+  defp build_store_command(cmd, key, value, options) do
+    flags = 0
+    exptime = options[:ttl]
+    bytes = byte_size(value)
 
-  defp build_store_command(cmd, key, flags, exptime, bytes, _cas, value) do
-    "#{cmd} #{key} #{flags} #{exptime} #{bytes}\r\n#{value}\r\n"
+    command = "#{cmd} #{key} #{flags} #{exptime} #{bytes}"
+
+    command = if options[:cas] do
+      "#{command} #{options[:cas]}"
+    else
+      command
+    end
+
+    command = if options[:noreply] do
+      "#{command} noreply"
+    else
+      command
+    end
+
+    "#{command}\r\n#{value}\r\n"
   end
 
   defp recv_values(socket, values \\ %{}) do
@@ -90,12 +112,12 @@ defmodule Cream.Worker.Client do
   defp recv_value(socket, line) do
     case String.split(line, " ") do
       ["END"] -> :end
-      ["VALUE", key, flags, bytes, cas] ->
+      ["VALUE", key, _flags, bytes, cas] ->
         case recv_bytes(socket, bytes) do
           {:ok, value} -> {:ok, key, {value, cas}}
           error -> error
         end
-      ["VALUE", key, flags, bytes] ->
+      ["VALUE", key, _flags, bytes] ->
         case recv_bytes(socket, bytes) do
           {:ok, value} -> {:ok, key, value}
           error -> error

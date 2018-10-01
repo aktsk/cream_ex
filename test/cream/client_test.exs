@@ -36,4 +36,10 @@ defmodule Cream.ClientTest do
     assert Client.replace("name", "Coco") == {:ok, :stored}
   end
 
+  test "mset" do
+    assert Client.get(["name", "species"]) == {:ok, %{}}
+    assert Client.mset(%{"name" => "Callie", "species" => "canine"}) == {:ok, :stored}
+    assert Client.get(["name", "species"]) == {:ok, %{"name" => "Callie", "species" => "canine"}}
+  end
+
 end
