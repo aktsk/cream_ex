@@ -8,4 +8,4 @@ config :logger,
   level: :info
 
 config :cream, Cream.Test.Client,
-  server: "localhost:11211"
+  server: "localhost:11201"

@@ -8,7 +8,7 @@ defmodule Coder.Marshal do
     import Bitwise, only: [&&&: 2]
 
     if (flags &&& 0b1) == 0b1 do
-      Marshal.decode(value)
+      ExMarshal.decode(value)
     else
       value
     end

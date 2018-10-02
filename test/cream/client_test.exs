@@ -38,8 +38,24 @@ defmodule Cream.ClientTest do
 
   test "mset" do
     assert Client.get(["name", "species"]) == {:ok, %{}}
-    assert Client.mset(%{"name" => "Callie", "species" => "canine"}) == {:ok, :stored}
+    assert Client.mset(%{"name" => "Callie", "species" => "canine"}) == :ok
     assert Client.get(["name", "species"]) == {:ok, %{"name" => "Callie", "species" => "canine"}}
+  end
+
+  test "coder" do
+    Client.set("name", "Callie", coder: Coder.Marshal)
+    assert (Client.get!("name") |> ExMarshal.decode) == "Callie"
+    assert Client.get!("name", coder: Coder.Marshal) == "Callie"
+
+    Client.set("dogs", ["Callie", "Coco", "Genevieve"], coder: Coder.Json)
+    assert Client.get!("dogs", coder: Coder.Json) == ["Callie", "Coco", "Genevieve"]
+  end
+
+  test "ttl" do
+    Client.set("name", "Callie", ttl: 1)
+    assert Client.get!("name") == "Callie"
+    :timer.sleep(1100)
+    assert Client.get!("name") == nil
   end
 
 end

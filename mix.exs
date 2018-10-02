@@ -68,7 +68,8 @@ defmodule Cream.Mixfile do
       {:poolboy, "~> 1.5"},
       {:instrumentation, ">= 0.1.0"},
       {:ex_doc, "~> 0.0", only: :dev},
-      {:ex_marshal, "> 0.0.0"}
+      {:ex_marshal, "> 0.0.0", only: :test},
+      {:poison, "> 0.0.0", only: :test}
     ]
   end
 end

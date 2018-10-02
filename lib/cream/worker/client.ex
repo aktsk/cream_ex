@@ -26,7 +26,7 @@ defmodule Cream.Worker.Client do
 
     socket_send(state.socket, command)
 
-    {:reply, {:ok, :stored}, state}
+    {:reply, :ok, state}
   end
 
   def handle_call({:store, cmd, {key, value}, options}, _from, state) do
@@ -79,7 +79,7 @@ defmodule Cream.Worker.Client do
   end
 
   defp build_store_command(cmd, key, value, options) do
-    flags = 0
+    {flags, value} = encode(value, options[:coder])
     exptime = options[:ttl]
     bytes = byte_size(value)
 
@@ -156,6 +156,9 @@ defmodule Cream.Worker.Client do
 
   defp atomize_line({:ok, line}), do: {:ok, line |> String.downcase |> String.to_atom}
   defp atomize_line(error), do: error
+
+  defp encode(value, nil), do: {0, value}
+  defp encode(value, coder), do: coder.encode(value)
 
   defp decode(_flags, value, nil), do: value
   defp decode(flags, value, coder) do

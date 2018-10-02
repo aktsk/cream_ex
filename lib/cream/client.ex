@@ -99,10 +99,10 @@ defmodule Cream.Client do
         Cream.Client.start_link(__MODULE__, @otp_app, config)
       end
 
-      def get(key_or_keys), do: Cream.Client.get(__MODULE__, key_or_keys)
-      def get!(key_or_keys), do: Cream.Client.get!(__MODULE__, key_or_keys)
-      def gets(key_or_keys), do: Cream.Client.gets(__MODULE__, key_or_keys)
-      def gets!(key_or_keys), do: Cream.Client.gets!(__MODULE__, key_or_keys)
+      def get(key_or_keys, opts \\ []), do: Cream.Client.get(__MODULE__, key_or_keys, opts)
+      def get!(key_or_keys, opts \\ []), do: Cream.Client.get!(__MODULE__, key_or_keys, opts)
+      def gets(key_or_keys, opts \\ []), do: Cream.Client.gets(__MODULE__, key_or_keys, opts)
+      def gets!(key_or_keys, opts \\ []), do: Cream.Client.gets!(__MODULE__, key_or_keys, opts)
 
       def set(key, value, opts \\ []), do: Cream.Client.set(__MODULE__, key, value, opts)
       def add(key, value, opts \\ []), do: Cream.Client.add(__MODULE__, key, value, opts)
@@ -165,39 +165,39 @@ defmodule Cream.Client do
     end
   end
 
-  def get(pool, key_or_keys)
+  def get(pool, key_or_keys, options \\ [])
 
-  def get(pool, keys) when is_list(keys) do
-    with_client(pool, &GenServer.call(&1, {:get, keys, []}))
+  def get(pool, keys, options) when is_list(keys) do
+    with_client(pool, &GenServer.call(&1, {:get, keys, options}))
   end
 
-  def get(pool, key) when not is_list(key) do
+  def get(pool, key, options) when not is_list(key) do
     pool
-    |> get([key])
+    |> get([key], options)
     |> extract_single_value(key)
   end
 
-  def get!(pool, key_or_keys) do
-    case get(pool, key_or_keys) do
+  def get!(pool, key_or_keys, options) do
+    case get(pool, key_or_keys, options) do
       {:ok, value_or_values} -> value_or_values
       {:error, reason} -> raise(reason)
     end
   end
 
-  def gets(pool, key_or_keys)
+  def gets(pool, key_or_keys, options \\ [])
 
-  def gets(pool, keys) when is_list(keys) do
-    with_client(pool, &GenServer.call(&1, {:gets, keys, []}))
+  def gets(pool, keys, options) when is_list(keys) do
+    with_client(pool, &GenServer.call(&1, {:gets, keys, options}))
   end
 
-  def gets(pool, key) when not is_list(key) do
+  def gets(pool, key, options) when not is_list(key) do
     pool
-    |> gets([key])
+    |> gets([key], options)
     |> extract_single_value(key)
   end
 
-  def gets!(pool, key_or_keys) do
-    case gets(pool, key_or_keys) do
+  def gets!(pool, key_or_keys, options) do
+    case gets(pool, key_or_keys, options) do
       {:ok, value_or_values} -> value_or_values
       {:error, reason} -> raise(reason)
     end
