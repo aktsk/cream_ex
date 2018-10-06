@@ -104,14 +104,16 @@ defmodule Cream.Client do
       def gets(key_or_keys, opts \\ []), do: Cream.Client.gets(__MODULE__, key_or_keys, opts)
       def gets!(key_or_keys, opts \\ []), do: Cream.Client.gets!(__MODULE__, key_or_keys, opts)
 
-      def set(key, value, opts \\ []), do: Cream.Client.set(__MODULE__, key, value, opts)
+      def set(keys_and_values, opts \\ []), do: Cream.Client.set(__MODULE__, keys_and_values, opts)
+      def set!(keys_and_values, opts \\ []), do: Cream.Client.set!(__MODULE__, keys_and_values, opts)
+
       def add(key, value, opts \\ []), do: Cream.Client.add(__MODULE__, key, value, opts)
       def replace(key, value, opts \\ []), do: Cream.Client.replace(__MODULE__, key, value, opts)
       def cas(key, value, cas, opts \\ []), do: Cream.Client.cas(__MODULE__, key, value, cas, opts)
 
       def delete(key), do: Cream.Client.delete(__MODULE__, key)
 
-      def flush_all(delay \\ nil), do: Cream.Client.flush_all(__MODULE__, delay)
+      def flush(opts \\ []), do: Cream.Client.flush(__MODULE__, opts)
 
       def mset(keys_and_values, opts \\ []), do: Cream.Client.mset(__MODULE__, keys_and_values, opts)
 
@@ -165,53 +167,81 @@ defmodule Cream.Client do
     end
   end
 
-  def get(pool, key_or_keys, options \\ [])
-
-  def get(pool, keys, options) when is_list(keys) do
-    with_client(pool, &GenServer.call(&1, {:get, keys, options}))
-  end
-
-  def get(pool, key, options) when not is_list(key) do
-    pool
-    |> get([key], options)
-    |> extract_single_value(key)
-  end
-
-  def get!(pool, key_or_keys, options) do
-    case get(pool, key_or_keys, options) do
-      {:ok, value_or_values} -> value_or_values
-      {:error, reason} -> raise(reason)
-    end
-  end
-
-  def gets(pool, key_or_keys, options \\ [])
-
-  def gets(pool, keys, options) when is_list(keys) do
-    with_client(pool, &GenServer.call(&1, {:gets, keys, options}))
-  end
-
-  def gets(pool, key, options) when not is_list(key) do
-    pool
-    |> gets([key], options)
-    |> extract_single_value(key)
-  end
-
-  def gets!(pool, key_or_keys, options) do
-    case gets(pool, key_or_keys, options) do
-      {:ok, value_or_values} -> value_or_values
-      {:error, reason} -> raise(reason)
-    end
-  end
+  # def get(pool, key_or_keys, options \\ [])
+  #
+  # def get(pool, keys, options) when is_list(keys) do
+  #   with_client(pool, &GenServer.call(&1, {:get, keys, options}))
+  # end
+  #
+  # def get(pool, key, options) when not is_list(key) do
+  #   pool
+  #   |> get([key], options)
+  #   |> extract_single_value(key)
+  # end
+  #
+  # def get!(pool, key_or_keys, options) do
+  #   case get(pool, key_or_keys, options) do
+  #     {:ok, value_or_values} -> value_or_values
+  #     {:error, reason} -> raise(reason)
+  #   end
+  # end
+  #
+  # def gets(pool, key_or_keys, options \\ [])
+  #
+  # def gets(pool, keys, options) when is_list(keys) do
+  #   with_client(pool, &GenServer.call(&1, {:gets, keys, options}))
+  # end
+  #
+  # def gets(pool, key, options) when not is_list(key) do
+  #   pool
+  #   |> gets([key], options)
+  #   |> extract_single_value(key)
+  # end
+  #
+  # def gets!(pool, key_or_keys, options) do
+  #   case gets(pool, key_or_keys, options) do
+  #     {:ok, value_or_values} -> value_or_values
+  #     {:error, reason} -> raise(reason)
+  #   end
+  # end
 
   @defaults [
     ttl: 0
   ]
-  def mset(pool, keys_and_values, options \\ []) do
-    store("mset", pool, keys_and_values, options)
+
+  def set(pool, keys_and_values, options \\ []) do
+    call(pool, {:set, keys_and_values, options})
   end
 
-  def set(pool, key, value, options \\ []) do
-    store("set", pool, {key, value}, options)
+  def set!(pool, keys_and_values, options \\ []) do
+    case set(pool, keys_and_values, options) do
+      {:ok, :stored} -> :stored
+      {:error, reason} -> raise(reason)
+      responses -> Map.new(responses, fn {key, response} ->
+        case response do
+          {:ok, :stored} -> {key, :stored}
+          {:error, reason} -> raise(reason)
+        end
+      end)
+    end
+  end
+
+  def get(pool, keys, options \\ []) do
+    call(pool, {:get, keys, options})
+  end
+
+  def get!(pool, keys, options \\ []) do
+    case get(pool, keys, options) do
+      {:ok, value} -> value
+      {:error, reason} -> raise(reason)
+      responses -> Enum.reduce(responses, %{}, fn {key, response}, acc ->
+        case response do
+          {:ok, nil} -> acc
+          {:ok, value} -> Map.put(acc, key, value)
+          {:error, reason} -> raise(reason)
+        end
+      end)
+    end
   end
 
   def add(pool, key, value, options \\ []) do
@@ -231,8 +261,8 @@ defmodule Cream.Client do
     with_client(pool, &GenServer.call(&1, {:delete, key}))
   end
 
-  def flush_all(pool, delay \\ nil) do
-    with_client(pool, &GenServer.call(&1, {:flush_all, delay}))
+  def flush(pool, options \\ []) do
+    call(pool, {:flush, options})
   end
 
   @defaults [
@@ -249,6 +279,10 @@ defmodule Cream.Client do
       {:ok, %{^key => value}} -> {:ok, value}
       error -> error
     end
+  end
+
+  defp call(pool, arg) do
+    with_client(pool, &GenServer.call(&1, arg))
   end
 
   defp with_client(pool, f) do

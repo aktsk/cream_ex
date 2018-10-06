@@ -9,3 +9,11 @@ config :logger,
 
 config :cream, Cream.Test.Client,
   server: "localhost:11201"
+
+config :cream, Cream.Test.BinaryClient,
+  server: "localhost:11201",
+  protocol: :binary
+
+config :cream, Cream.Test.AsciiClient,
+  server: "localhost:11201",
+  protocol: :ascii

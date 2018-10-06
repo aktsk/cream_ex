@@ -33,7 +33,7 @@ defmodule Cream.Mixfile do
   end
 
   defp elixirc_paths(:dev) do
-    ["lib", "dev"]
+    ["lib", "test/support"]
   end
 
   defp elixirc_paths(_) do
@@ -68,8 +68,7 @@ defmodule Cream.Mixfile do
       {:poolboy, "~> 1.5"},
       {:instrumentation, ">= 0.1.0"},
       {:ex_doc, "~> 0.0", only: :dev},
-      {:ex_marshal, "> 0.0.0", only: :test},
-      {:poison, "> 0.0.0", only: :test}
+      {:ex_marshal, "> 0.0.0", only: :test}
     ]
   end
 end

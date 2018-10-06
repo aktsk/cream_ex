@@ -8,4 +8,7 @@ config :cream, :clusters, [
   ]
 ]
 
-config :cream, Client, []
+config :cream, Cream.Test.Client, []
+
+config :cream, Cream.Test.AsciiClient, protocol: :ascii
+config :cream, Cream.Test.BinaryClient, protocol: :binary
