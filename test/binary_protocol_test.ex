@@ -20,6 +20,11 @@ defmodule BinaryProtocolTest do
     end
   end
 
+  test "set client error" do
+    AsciiClient.flush
+    assert AsciiClient.set({"foo", "bar"}, ttl: "tomorrow") == {:error, "bad command line format"}
+  end
+
   test "set and get" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
@@ -45,34 +50,29 @@ defmodule BinaryProtocolTest do
         "species" => "canine"
       }
 
-      assert client.set(keys_and_values) == %{
-        "name" => {:ok, :stored},
-        "species" => {:ok, :stored}
-      }
+      assert client.set(keys_and_values) == {:ok, :stored}
 
-      assert client.get(["name", "species", "foo"]) == %{
-        "name" => {:ok, "Callie"},
-        "species" => {:ok, "canine"},
-        "foo" => {:ok, nil}
-      }
+      assert client.get(["name", "species", "foo"]) == {:ok, %{
+        "name" => "Callie",
+        "species" => "canine",
+      }}
     end
   end
 
-  # test "mset! and mget!" do
-  #   keys_and_values = %{
-  #     "name" => "Callie",
-  #     "species" => "canine"
-  #   }
-  #
-  #   assert Client.set!(keys_and_values) == %{
-  #     "name" => :stored,
-  #     "species" => :stored
-  #   }
-  #
-  #   assert Client.get!(["name", "species", "foo"]) == %{
-  #     "name" => "Callie",
-  #     "species" => "canine"
-  #   }
-  # end
+  test "mset! and mget!" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      keys_and_values = %{
+        "name" => "Callie",
+        "species" => "canine"
+      }
+
+      assert client.set!(keys_and_values) == :stored
+
+      assert client.get!(["name", "species", "foo"]) == %{
+        "name" => "Callie",
+        "species" => "canine"
+      }
+    end
+  end
 
 end

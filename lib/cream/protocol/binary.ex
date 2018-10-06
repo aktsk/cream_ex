@@ -32,8 +32,10 @@ defmodule Cream.Protocol.Binary do
     |> send_messages(socket)
 
     case recv_messages(socket) do
-      [] -> Map.new(keys_and_values, fn {key, _value} -> {key, {:ok, :stored}} end)
-      # TODO handle errors
+      [] -> {:ok, :stored}
+      messages -> {:error, Map.new(messages, fn message ->
+        {message.key, message.value}
+      end)}
     end
   end
 
@@ -44,15 +46,10 @@ defmodule Cream.Protocol.Binary do
     |> to_binary
     |> socket_send(socket)
 
-    found = recv_messages(socket)
-    |> Map.new(&{&1.key, &1.value})
-
-    Map.new(keys, fn key ->
-      case found[key] do
-        nil -> {key, {:ok, nil}}
-        value -> {key, {:ok, value}}
-      end
-    end)
+    case recv_messages(socket) do
+      {:error, _reason} = error -> error
+      messages -> {:ok, Map.new(messages, &{&1.key, &1.value})}
+    end
   end
 
   def get(socket, key, _options) do
@@ -89,12 +86,12 @@ defmodule Cream.Protocol.Binary do
   end
 
   defp to_binary(messages) when is_list(messages) do
-    messages
-    |> Enum.map(&Message.to_binary/1)
-    |> Enum.join
+    Enum.map(messages, &Message.to_binary/1)
   end
 
-  defp to_binary(message), do: Message.to_binary(message)
+  defp to_binary(message) do
+    Message.to_binary(message)
+  end
 
   defp recv_message(socket) do
     recv_header(socket)
