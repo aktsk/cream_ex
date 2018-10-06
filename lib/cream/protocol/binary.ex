@@ -17,9 +17,11 @@ defmodule Cream.Protocol.Binary do
     new_message(:set, key: key, value: value, extra: extra)
     |> send_message(socket)
 
-    case recv_message(socket) do
-      %{status: 0} -> {:ok, :stored}
-      %{value: reason} -> {:error, reason}
+    with {:ok, message} <- recv_message(socket) do
+      case message do
+        %{status: 0} -> {:ok, :stored}
+        %{value: reason} -> {:error, reason}
+      end
     end
   end
 
@@ -27,15 +29,25 @@ defmodule Cream.Protocol.Binary do
     extra = extra(:set, options)
 
     Enum.reduce(keys_and_values, [new_message(:noop)], fn {key, value}, acc ->
-      [new_message(:setq, key: key, value: value, extra: extra) | acc]
+      [new_message(:set, key: key, value: value, extra: extra) | acc]
     end)
     |> send_messages(socket)
 
-    case recv_messages(socket) do
-      [] -> {:ok, :stored}
-      messages -> {:error, Map.new(messages, fn message ->
-        {message.key, message.value}
-      end)}
+    with {:ok, messages} <- recv_messages(socket) do
+      errors = keys_and_values
+      |> Stream.zip(messages)
+      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
+        case message do
+          %{status: 0} -> acc
+          %{value: reason} -> Map.put(acc, key, reason)
+        end
+      end)
+
+      if errors == %{} do
+        {:ok, :stored}
+      else
+        {:error, errors}
+      end
     end
   end
 
@@ -46,9 +58,8 @@ defmodule Cream.Protocol.Binary do
     |> to_binary
     |> socket_send(socket)
 
-    case recv_messages(socket) do
-      {:error, _reason} = error -> error
-      messages -> {:ok, Map.new(messages, &{&1.key, &1.value})}
+    with {:ok, messages} <- recv_messages(socket) do
+      {:ok, Map.new(messages, &{&1.key, &1.value})}
     end
   end
 
@@ -56,10 +67,12 @@ defmodule Cream.Protocol.Binary do
     new_message(:get, key: key)
     |> send_message(socket)
 
-    case recv_message(socket) do
-      %{status: 0, value: value} -> {:ok, value}
-      %{status: 1} -> {:ok, nil}
-      %{value: reason} -> {:error, reason}
+    with {:ok, message} <- recv_message(socket) do
+      case message do
+        %{status: 0, value: value} -> {:ok, value}
+        %{status: 1} -> {:ok, nil}
+        %{value: reason} -> {:error, reason}
+      end
     end
   end
 
@@ -94,25 +107,30 @@ defmodule Cream.Protocol.Binary do
   end
 
   defp recv_message(socket) do
-    recv_header(socket)
-    |> recv_body(socket)
+    with {:ok, message} <- recv_header(socket) do
+      recv_body(message, socket)
+    end
   end
 
   def recv_header(socket) do
-    {:ok, data} = :gen_tcp.recv(socket, 24)
-    Message.from_binary(data)
+    with {:ok, data} <- :gen_tcp.recv(socket, 24) do
+      {:ok, Message.from_binary(data)}
+    end
   end
 
-  def recv_body(%{total_body: 0} = message, _socket), do: message
+  def recv_body(%{total_body: 0} = message, _socket), do: {:ok, message}
   def recv_body(%{total_body: total_body} = message, socket) do
-    {:ok, data} = :gen_tcp.recv(socket, total_body)
-    Message.from_binary(message, data)
+    with {:ok, data} <- :gen_tcp.recv(socket, total_body) do
+      {:ok, Message.from_binary(message, data)}
+    end
   end
 
   defp recv_messages(socket, messages \\ []) do
-    case recv_message(socket) do
-      %{opcode: :noop} -> Enum.reverse(messages)
-      message -> recv_messages(socket, [message | messages])
+    with {:ok, message} = recv_message(socket) do
+      case message do
+        %{opcode: :noop} -> {:ok, Enum.reverse(messages)}
+        message -> recv_messages(socket, [message | messages])
+      end
     end
   end
 
