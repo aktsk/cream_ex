@@ -6,8 +6,8 @@ defmodule Cream.Protocol.Binary do
   def flush(socket, options) do
     extra = extra(:flush, options)
 
-    new_message(:flush, extra: extra)
-    |> send_message(socket)
+    Message.binary(:flush, extra: extra)
+    |> socket_send(socket)
 
     with {:ok, message} <- recv_message(socket) do
       case message do
@@ -20,8 +20,8 @@ defmodule Cream.Protocol.Binary do
   def set(socket, {key, value}, options) do
     extra = extra(:store, options)
 
-    new_message(:set, key: key, value: value, extra: extra)
-    |> send_message(socket)
+    Message.binary(:set, key: key, value: value, extra: extra)
+    |> socket_send(socket)
 
     with {:ok, message} <- recv_message(socket) do
       case message do
@@ -34,10 +34,11 @@ defmodule Cream.Protocol.Binary do
   def set(socket, keys_and_values, options) do
     extra = extra(:store, options)
 
-    Enum.reduce(keys_and_values, [new_message(:noop)], fn {key, value}, acc ->
-      [new_message(:set, key: key, value: value, extra: extra) | acc]
+    Enum.map(keys_and_values, fn {key, value} ->
+      Message.binary(:set, key: key, value: value, extra: extra)
     end)
-    |> send_messages(socket)
+    |> append(Message.binary(:noop))
+    |> socket_send(socket)
 
     with {:ok, messages} <- recv_messages(socket) do
       errors = keys_and_values
@@ -60,8 +61,8 @@ defmodule Cream.Protocol.Binary do
   def add(socket, {key, value}, options) do
     extra = extra(:store, options)
 
-    new_message(:add, key: key, value: value, extra: extra)
-    |> send_message(socket)
+    Message.binary(:add, key: key, value: value, extra: extra)
+    |> socket_send(socket)
 
     with {:ok, message} <- recv_message(socket) do
       case message do
@@ -71,11 +72,36 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
-  def get(socket, keys, _options) when is_list(keys) do
-    Enum.reduce(keys, [new_message(:noop)], fn key, acc ->
-      [new_message(:getkq, key: key) | acc]
+  def add(socket, keys_and_values, options) do
+    extra = extra(:store, options)
+
+    Enum.map(keys_and_values, fn {key, value} ->
+      Message.binary(:add, key: key, value: value, extra: extra)
     end)
-    |> to_binary
+    |> append(Message.binary(:noop))
+    |> socket_send(socket)
+
+    with {:ok, messages} <- recv_messages(socket) do
+      errors = keys_and_values
+      |> Stream.zip(messages)
+      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
+        case message do
+          %{status: 0} -> acc
+          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
+        end
+      end)
+
+      if errors == %{} do
+        {:ok, :stored}
+      else
+        {:error, errors}
+      end
+    end
+  end
+
+  def get(socket, keys, _options) when is_list(keys) do
+    Enum.map(keys, &Message.binary(:getkq, key: &1))
+    |> append(Message.binary(:noop))
     |> socket_send(socket)
 
     with {:ok, messages} <- recv_messages(socket) do
@@ -84,8 +110,8 @@ defmodule Cream.Protocol.Binary do
   end
 
   def get(socket, key, _options) do
-    new_message(:get, key: key)
-    |> send_message(socket)
+    Message.binary(:get, key: key)
+    |> socket_send(socket)
 
     with {:ok, message} <- recv_message(socket) do
       case message do
@@ -95,6 +121,8 @@ defmodule Cream.Protocol.Binary do
       end
     end
   end
+
+  defp append(list, item), do: [list, item]
 
   defp extra(:store, options) do
     flags = if options[:coder], do: 1, else: 0
@@ -112,18 +140,6 @@ defmodule Cream.Protocol.Binary do
     else
       <<>>
     end
-  end
-
-  defp new_message(opcode, fields \\ []) do
-    Message.new(opcode, fields)
-  end
-
-  defp to_binary(messages) when is_list(messages) do
-    Enum.map(messages, &Message.to_binary/1)
-  end
-
-  defp to_binary(message) do
-    Message.to_binary(message)
   end
 
   defp recv_message(socket) do
@@ -152,18 +168,6 @@ defmodule Cream.Protocol.Binary do
         message -> recv_messages(socket, [message | messages])
       end
     end
-  end
-
-  defp send_message(message, socket) do
-    message
-    |> to_binary
-    |> socket_send(socket)
-  end
-
-  defp send_messages(messages, socket) do
-    messages
-    |> to_binary
-    |> socket_send(socket)
   end
 
   defp socket_send(data, socket) do

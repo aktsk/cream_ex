@@ -30,6 +30,8 @@ defmodule Cream.Protocol.Binary.Message do
     %{struct!(__MODULE__, fields) | opcode: Opcode.to_atom(opcode)}
   end
 
+  def binary(opcode, fields \\ []), do: new(opcode, fields) |> to_binary
+
   defmacrop bytes(n) do
     bytes = n*8
     quote do: size(unquote(bytes))

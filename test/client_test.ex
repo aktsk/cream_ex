@@ -123,4 +123,21 @@ defmodule ClientTest do
     end
   end
 
+  test "madd" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      keys_and_values = %{
+        "name" => "Callie",
+        "species" => "canine"
+      }
+
+      client.set({"name", "Callie"})
+
+      assert client.add(keys_and_values) == {:error, %{
+        "name" => :not_stored
+      }}
+    end
+  end
+
 end

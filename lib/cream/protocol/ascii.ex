@@ -45,6 +45,25 @@ defmodule Cream.Protocol.Ascii do
     recv_line(socket)
   end
 
+  def add(socket, keys_and_values, options) do
+    keys_and_values
+    |> Enum.map(fn {key, value} -> build_store_command("add", key, value, options) end)
+    |> socket_send(socket)
+
+    errors = Enum.reduce(keys_and_values, %{}, fn {key, _value}, acc ->
+      case recv_line(socket) do
+        {:error, reason} -> Map.put(acc, key, reason)
+        _ -> acc
+      end
+    end)
+
+    if errors == %{} do
+      {:ok, :stored}
+    else
+      {:error, errors}
+    end
+  end
+
   def get(socket, keys, options) when is_list(keys) do
     Enum.reduce(keys, ["get"], &cmd(&2, &1))
     |> cmd("\r\n", :trim)

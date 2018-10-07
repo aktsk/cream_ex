@@ -5,6 +5,8 @@ defmodule Cream.Protocol.Reason do
 
   def tr("STORED"), do: :stored
 
+  def tr("NOT_FOUND"), do: :not_found
+
   def tr("Data exists for key."), do: :not_stored
   def tr("NOT_STORED"), do: :not_stored
 

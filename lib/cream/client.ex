@@ -108,6 +108,9 @@ defmodule Cream.Client do
       def add(keys_and_values, opts \\ []), do: Cream.Client.add(__MODULE__, keys_and_values, opts)
       def add!(keys_and_values, opts \\ []), do: Cream.Client.add!(__MODULE__, keys_and_values, opts)
 
+      def replace(keys_and_values, opts \\ []), do: Cream.Client.replace(__MODULE__, keys_and_values, opts)
+      def replace!(keys_and_values, opts \\ []), do: Cream.Client.replace!(__MODULE__, keys_and_values, opts)
+
       def flush(opts \\ []), do: Cream.Client.flush(__MODULE__, opts)
 
     end
@@ -175,6 +178,14 @@ defmodule Cream.Client do
 
   def add!(pool, keys_and_values, options \\ []) do
     add(pool, keys_and_values, options) |> bang
+  end
+
+  def replace(pool, keys_and_values, options \\ []) do
+    call(pool, {:replace, keys_and_values, options})
+  end
+
+  def replace!(pool, keys_and_values, options \\ []) do
+    replace(pool, keys_and_values, options) |> bang
   end
 
   def get(pool, keys, options \\ []) do
