@@ -99,6 +99,43 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
+  def replace(socket, {key, value}, options) do
+    replace(socket, [{key, value}], options)
+    |> response_for(key)
+  end
+
+  def replace(socket, keys_and_values, options) do
+    extra = extra(:store, options)
+
+    Enum.map(keys_and_values, fn {key, value} ->
+      Message.binary(:replace, key: key, value: value, extra: extra)
+    end)
+    |> append(Message.binary(:noop))
+    |> socket_send(socket)
+
+    with {:ok, messages} <- recv_messages(socket) do
+      errors = keys_and_values
+      |> Stream.zip(messages)
+      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
+        case message do
+          %{status: 0} -> acc
+          %{value: reason} ->
+            reason = case Reason.tr(reason) do
+              :not_found -> :not_stored
+              reason -> reason
+            end
+            Map.put(acc, key, reason)
+        end
+      end)
+
+      if errors == %{} do
+        {:ok, :stored}
+      else
+        {:error, errors}
+      end
+    end
+  end
+
   def get(socket, keys, _options) when is_list(keys) do
     Enum.map(keys, &Message.binary(:getkq, key: &1))
     |> append(Message.binary(:noop))
@@ -119,6 +156,13 @@ defmodule Cream.Protocol.Binary do
         %{status: 1} -> {:ok, nil}
         %{value: reason} -> {:error, Reason.tr(reason)}
       end
+    end
+  end
+
+  defp response_for(response, key) do
+    case response do
+      {:error, %{^key => reason}} -> {:error, reason}
+      response -> response
     end
   end
 

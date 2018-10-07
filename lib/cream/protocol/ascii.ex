@@ -64,6 +64,31 @@ defmodule Cream.Protocol.Ascii do
     end
   end
 
+  def replace(socket, {key, value}, options) do
+    build_store_command("replace", key, value, options)
+    |> socket_send(socket)
+
+    recv_line(socket)
+  end
+
+  def replace(socket, keys_and_values, options) do
+    build_store_commmands("replace", keys_and_values, options)
+    |> socket_send(socket)
+
+    errors = Enum.reduce(keys_and_values, %{}, fn {key, _value}, acc ->
+      case recv_line(socket) do
+        {:error, reason} -> Map.put(acc, key, reason)
+        _ -> acc
+      end
+    end)
+
+    if errors == %{} do
+      {:ok, :stored}
+    else
+      {:error, errors}
+    end
+  end
+
   def get(socket, keys, options) when is_list(keys) do
     Enum.reduce(keys, ["get"], &cmd(&2, &1))
     |> cmd("\r\n", :trim)
@@ -77,6 +102,11 @@ defmodule Cream.Protocol.Ascii do
       {:ok, values} -> {:ok, values[key]}
       error -> error
     end
+  end
+
+  defp build_store_commmands(cmd, keys_and_values, options) do
+    keys_and_values
+    |> Enum.map(fn {key, value} -> build_store_command(cmd, key, value, options) end)
   end
 
   defp build_store_command(cmd, key, value, options) do

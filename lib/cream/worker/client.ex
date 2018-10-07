@@ -32,6 +32,10 @@ defmodule Cream.Worker.Client do
     protocol(:add, [keys_and_values], options, state)
   end
 
+  def handle_call({:replace, keys_and_values, options}, _from, state) do
+    protocol(:replace, [keys_and_values], options, state)
+  end
+
   def handle_call({:get, keys, options}, _from, state) do
     protocol(:get, [keys], options, state)
   end
