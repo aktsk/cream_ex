@@ -17,123 +17,46 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
+  # Single set
   def set(socket, {key, value}, options) do
-    extra = extra(:store, options)
-
-    Message.binary(:set, key: key, value: value, extra: extra)
-    |> socket_send(socket)
-
-    with {:ok, message} <- recv_message(socket) do
-      case message do
-        %{status: 0} -> {:ok, :stored}
-        %{value: reason} -> {:error, Reason.tr(reason)}
-      end
-    end
+    set(socket, [{key, value}], options)
+    |> response_for(key)
   end
 
+  # Multi set
   def set(socket, keys_and_values, options) do
-    extra = extra(:store, options)
-
-    Enum.map(keys_and_values, fn {key, value} ->
-      Message.binary(:set, key: key, value: value, extra: extra)
-    end)
-    |> append(Message.binary(:noop))
+    storage_commands(:set, keys_and_values, options)
     |> socket_send(socket)
 
-    with {:ok, messages} <- recv_messages(socket) do
-      errors = keys_and_values
-      |> Stream.zip(messages)
-      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
-        case message do
-          %{status: 0} -> acc
-          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
-        end
-      end)
-
-      if errors == %{} do
-        {:ok, :stored}
-      else
-        {:error, errors}
-      end
-    end
+    storage_reponses(keys_and_values, socket)
   end
 
+  # Single add
   def add(socket, {key, value}, options) do
-    extra = extra(:store, options)
-
-    Message.binary(:add, key: key, value: value, extra: extra)
-    |> socket_send(socket)
-
-    with {:ok, message} <- recv_message(socket) do
-      case message do
-        %{status: 0} -> {:ok, :stored}
-        %{value: reason} -> {:error, Reason.tr(reason)}
-      end
-    end
+    add(socket, [{key, value}], options)
+    |> response_for(key)
   end
 
+  # Multi add
   def add(socket, keys_and_values, options) do
-    extra = extra(:store, options)
-
-    Enum.map(keys_and_values, fn {key, value} ->
-      Message.binary(:add, key: key, value: value, extra: extra)
-    end)
-    |> append(Message.binary(:noop))
+    storage_commands(:add, keys_and_values, options)
     |> socket_send(socket)
 
-    with {:ok, messages} <- recv_messages(socket) do
-      errors = keys_and_values
-      |> Stream.zip(messages)
-      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
-        case message do
-          %{status: 0} -> acc
-          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
-        end
-      end)
-
-      if errors == %{} do
-        {:ok, :stored}
-      else
-        {:error, errors}
-      end
-    end
+    storage_reponses(keys_and_values, socket)
   end
 
+  # Single replace
   def replace(socket, {key, value}, options) do
     replace(socket, [{key, value}], options)
     |> response_for(key)
   end
 
+  # Multi replace
   def replace(socket, keys_and_values, options) do
-    extra = extra(:store, options)
-
-    Enum.map(keys_and_values, fn {key, value} ->
-      Message.binary(:replace, key: key, value: value, extra: extra)
-    end)
-    |> append(Message.binary(:noop))
+    storage_commands(:replace, keys_and_values, options)
     |> socket_send(socket)
 
-    with {:ok, messages} <- recv_messages(socket) do
-      errors = keys_and_values
-      |> Stream.zip(messages)
-      |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
-        case message do
-          %{status: 0} -> acc
-          %{value: reason} ->
-            reason = case Reason.tr(reason) do
-              :not_found -> :not_stored
-              reason -> reason
-            end
-            Map.put(acc, key, reason)
-        end
-      end)
-
-      if errors == %{} do
-        {:ok, :stored}
-      else
-        {:error, errors}
-      end
-    end
+    storage_reponses(keys_and_values, socket, not_found: :not_stored)
   end
 
   def get(socket, keys, _options) when is_list(keys) do
@@ -155,6 +78,43 @@ defmodule Cream.Protocol.Binary do
         %{status: 0, value: value} -> {:ok, value}
         %{status: 1} -> {:ok, nil}
         %{value: reason} -> {:error, Reason.tr(reason)}
+      end
+    end
+  end
+
+  defp storage_commands(opcode, keys_and_values, options) do
+    extra = extra(:store, options)
+
+    Enum.map(keys_and_values, fn {key, value} ->
+      Message.binary(opcode, key: key, value: value, extra: extra)
+    end)
+    |> append(Message.binary(:noop))
+  end
+
+  defp storage_reponses(keys_and_values, socket, tr_reason \\ []) do
+    with {:ok, messages} <- recv_messages(socket) do
+      errors =
+        keys_and_values
+        |> Stream.zip(messages)
+        |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
+          case message do
+            %{status: 0} -> acc
+            %{value: reason} ->
+              reason = Reason.tr(reason)
+              # Ugh, binary protocol responds with :not_found for :replace commands while
+              # the ascii protocol responds with :not_stored. tr_reason argument is to override.
+              reason = case tr_reason do
+                [{^reason, reason}] -> reason
+                _ -> reason
+              end
+              Map.put(acc, key, reason)
+          end
+        end)
+
+      if errors == %{} do
+        {:ok, :stored}
+      else
+        {:error, errors}
       end
     end
   end

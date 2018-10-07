@@ -36,7 +36,7 @@ defmodule ClientTest do
     end
   end
 
-  test "mset server error" do
+  test "multi-set server error" do
     value = String.duplicate("x", 1024*1024)
 
     Enum.each [AsciiClient, BinaryClient], fn client ->
@@ -71,7 +71,7 @@ defmodule ClientTest do
     end
   end
 
-  test "mset and mget" do
+  test "multi-set and multi-get" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
 
@@ -91,7 +91,7 @@ defmodule ClientTest do
     end
   end
 
-  test "mset! and mget!" do
+  test "multi-set! and multi-get!" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
 
@@ -123,7 +123,7 @@ defmodule ClientTest do
     end
   end
 
-  test "madd" do
+  test "multi-add" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
 
