@@ -30,34 +30,29 @@ defmodule ClientTest do
 
   test "set server error" do
     value = String.duplicate("x", 1024*1024)
-
-    AsciiClient.flush
-    assert AsciiClient.set({"foo", value}) == {:error, "object too large for cache"}
-
-    BinaryClient.flush
-    assert BinaryClient.set({"foo", value}) == {:error, "Too large."}
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+      assert client.set({"foo", value}) == {:error, "object too large for cache"}
+    end
   end
 
   test "mset server error" do
     value = String.duplicate("x", 1024*1024)
 
-    keys_and_values = [
-      {"foo", value},
-      {"bar", "bar"},
-      {"baz", value}
-    ]
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
 
-    AsciiClient.flush
-    assert AsciiClient.set(keys_and_values) == {:error, %{
-      "foo" => "object too large for cache",
-      "baz" => "object too large for cache"
-    }}
+      keys_and_values = [
+        {"foo", value},
+        {"bar", "bar"},
+        {"baz", value}
+      ]
 
-    BinaryClient.flush
-    assert BinaryClient.set(keys_and_values) == {:error, %{
-      "foo" => "Too large.",
-      "baz" => "Too large."
-    }}
+      assert client.set(keys_and_values) == {:error, %{
+        "foo" => "object too large for cache",
+        "baz" => "object too large for cache"
+      }}
+    end
   end
 
   test "set and get" do
@@ -113,6 +108,18 @@ defmodule ClientTest do
         "name" => "Callie",
         "species" => "canine"
       }
+    end
+  end
+
+  test "add" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      assert client.add({"name", "Callie"}) == {:ok, :stored}
+      assert client.get("name") == {:ok, "Callie"}
+
+      assert client.add({"name", "Coco"}) == {:error, :not_stored}
+      assert client.get("name") == {:ok, "Callie"}
     end
   end
 

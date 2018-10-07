@@ -1,6 +1,7 @@
 defmodule Cream.Protocol.Binary do
 
   alias Cream.Protocol.Binary.Message
+  alias Cream.Protocol.Reason
 
   def flush(socket, options) do
     extra = extra(:flush, options)
@@ -8,11 +9,16 @@ defmodule Cream.Protocol.Binary do
     new_message(:flush, extra: extra)
     |> send_message(socket)
 
-    recv_message(socket)
+    with {:ok, message} <- recv_message(socket) do
+      case message do
+        %{status: 0} -> {:ok, :flushed}
+        %{value: reason} -> {:error, Reason.tr(reason)}
+      end
+    end
   end
 
   def set(socket, {key, value}, options) do
-    extra = extra(:set, options)
+    extra = extra(:store, options)
 
     new_message(:set, key: key, value: value, extra: extra)
     |> send_message(socket)
@@ -20,13 +26,13 @@ defmodule Cream.Protocol.Binary do
     with {:ok, message} <- recv_message(socket) do
       case message do
         %{status: 0} -> {:ok, :stored}
-        %{value: reason} -> {:error, reason}
+        %{value: reason} -> {:error, Reason.tr(reason)}
       end
     end
   end
 
   def set(socket, keys_and_values, options) do
-    extra = extra(:set, options)
+    extra = extra(:store, options)
 
     Enum.reduce(keys_and_values, [new_message(:noop)], fn {key, value}, acc ->
       [new_message(:set, key: key, value: value, extra: extra) | acc]
@@ -39,7 +45,7 @@ defmodule Cream.Protocol.Binary do
       |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
         case message do
           %{status: 0} -> acc
-          %{value: reason} -> Map.put(acc, key, reason)
+          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
         end
       end)
 
@@ -47,6 +53,20 @@ defmodule Cream.Protocol.Binary do
         {:ok, :stored}
       else
         {:error, errors}
+      end
+    end
+  end
+
+  def add(socket, {key, value}, options) do
+    extra = extra(:store, options)
+
+    new_message(:add, key: key, value: value, extra: extra)
+    |> send_message(socket)
+
+    with {:ok, message} <- recv_message(socket) do
+      case message do
+        %{status: 0} -> {:ok, :stored}
+        %{value: reason} -> {:error, Reason.tr(reason)}
       end
     end
   end
@@ -71,12 +91,12 @@ defmodule Cream.Protocol.Binary do
       case message do
         %{status: 0, value: value} -> {:ok, value}
         %{status: 1} -> {:ok, nil}
-        %{value: reason} -> {:error, reason}
+        %{value: reason} -> {:error, Reason.tr(reason)}
       end
     end
   end
 
-  defp extra(:set, options) do
+  defp extra(:store, options) do
     flags = if options[:coder], do: 1, else: 0
     ttl = options[:ttl]
 

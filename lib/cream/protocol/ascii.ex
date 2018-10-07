@@ -1,11 +1,12 @@
 defmodule Cream.Protocol.Ascii do
 
   alias Cream.Coder
+  alias Cream.Protocol.Reason
 
   def flush(socket, options) do
     ["flush_all"]
-    |> add(options[:delay])
-    |> add("\r\n", :trim)
+    |> cmd(options[:delay])
+    |> cmd("\r\n", :trim)
     |> socket_send(socket)
 
     recv_line(socket)
@@ -37,9 +38,16 @@ defmodule Cream.Protocol.Ascii do
     end
   end
 
+  def add(socket, {key, value}, options) do
+    build_store_command("add", key, value, options)
+    |> socket_send(socket)
+
+    recv_line(socket)
+  end
+
   def get(socket, keys, options) when is_list(keys) do
-    Enum.reduce(keys, ["get"], &add(&2, &1))
-    |> add("\r\n", :trim)
+    Enum.reduce(keys, ["get"], &cmd(&2, &1))
+    |> cmd("\r\n", :trim)
     |> socket_send(socket)
 
     recv_values(socket, options[:coder])
@@ -58,22 +66,22 @@ defmodule Cream.Protocol.Ascii do
     bytes = byte_size(value)
 
     [cmd]
-    |> add(key)
-    |> add(flags)
-    |> add(exptime)
-    |> add(bytes)
-    |> add(options[:cas])
-    |> add(options[:noreply] && "noreply")
-    |> add("\r\n", :trim)
-    |> add(value, :trim)
-    |> add("\r\n", :trim)
+    |> cmd(key)
+    |> cmd(flags)
+    |> cmd(exptime)
+    |> cmd(bytes)
+    |> cmd(options[:cas])
+    |> cmd(options[:noreply] && "noreply")
+    |> cmd("\r\n", :trim)
+    |> cmd(value, :trim)
+    |> cmd("\r\n", :trim)
   end
 
-  defp add(command, arg, trim \\ nil)
-  defp add(command, nil, _trim), do: command
-  defp add(command, "", _trim), do: command
-  defp add(command, arg, nil), do: [command, " ", to_string(arg)]
-  defp add(command, arg, :trim), do: [command, to_string(arg)]
+  defp cmd(command, arg, trim \\ nil)
+  defp cmd(command, nil, _trim), do: command
+  defp cmd(command, "", _trim), do: command
+  defp cmd(command, arg, nil), do: [command, " ", to_string(arg)]
+  defp cmd(command, arg, :trim), do: [command, to_string(arg)]
 
   defp chomp(line), do: String.replace_suffix(line, "\r\n", "")
 
@@ -89,10 +97,10 @@ defmodule Cream.Protocol.Ascii do
             {:ok, "ERROR\r\n"} -> {:error, reason}
             error -> error
           end
-        "STORED" -> {:ok, :stored}
-        "NOT_STORED" -> {:error, :not_stored}
-        "EXISTS" -> {:error, :exists}
-        "NOT_FOUND" -> {:error, :not_found}
+        "STORED"      -> {:ok,    Reason.tr("STORED")}
+        "NOT_STORED"  -> {:error, Reason.tr("NOT_STORED")}
+        "EXISTS"      -> {:error, Reason.tr("EXISTS")}
+        "NOT_FOUND"   -> {:error, Reason.tr("NOT_FOUND")}
         line -> {:ok, line}
       end
     end
