@@ -150,4 +150,22 @@ defmodule ClientTest do
     end
   end
 
+  test "multi-replace" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      client.set({"name", "Callie"})
+
+      keys_and_values = %{"name" => "Coco", "species" => "canine"}
+
+      assert client.replace(keys_and_values) == {:error, %{
+        "species" => :not_stored
+      }}
+
+      client.set({"species", "canine"})
+
+      assert client.replace(keys_and_values) == {:ok, :stored}
+    end
+  end
+
 end
