@@ -140,6 +140,7 @@ defmodule ClientTest do
     end
   end
 
+  @tag :focus
   test "replace" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush

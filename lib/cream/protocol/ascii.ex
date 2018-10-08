@@ -9,84 +9,43 @@ defmodule Cream.Protocol.Ascii do
     |> append("\r\n", :trim)
     |> socket_send(socket)
 
-    recv_line(socket)
+    with {:ok, "OK"} <- recv_line(socket), do: {:ok, :flushed}
   end
 
   def set(socket, {key, value}, options) do
-    build_store_command("set", key, value, options)
-    |> socket_send(socket)
-
-    recv_line(socket)
+    set(socket, [{key, value}], options)
+    |> response_for(key)
   end
 
   def set(socket, keys_and_values, options) do
-    keys_and_values
-    |> Enum.map(fn {key, value} -> build_store_command("set", key, value, options) end)
+    build_store_commmands("set", keys_and_values, options)
     |> socket_send(socket)
 
-    errors = Enum.reduce(keys_and_values, %{}, fn {key, _value}, acc ->
-      case recv_line(socket) do
-        {:error, reason} -> Map.put(acc, key, reason)
-        _ -> acc
-      end
-    end)
-
-    if errors == %{} do
-      {:ok, :stored}
-    else
-      {:error, errors}
-    end
+    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
   end
 
   def add(socket, {key, value}, options) do
-    build_store_command("add", key, value, options)
-    |> socket_send(socket)
-
-    recv_line(socket)
+    add(socket, [{key, value}], options)
+    |> response_for(key)
   end
 
   def add(socket, keys_and_values, options) do
-    keys_and_values
-    |> Enum.map(fn {key, value} -> build_store_command("add", key, value, options) end)
+    build_store_commmands("add", keys_and_values, options)
     |> socket_send(socket)
 
-    errors = Enum.reduce(keys_and_values, %{}, fn {key, _value}, acc ->
-      case recv_line(socket) do
-        {:error, reason} -> Map.put(acc, key, reason)
-        _ -> acc
-      end
-    end)
-
-    if errors == %{} do
-      {:ok, :stored}
-    else
-      {:error, errors}
-    end
+    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
   end
 
   def replace(socket, {key, value}, options) do
-    build_store_command("replace", key, value, options)
-    |> socket_send(socket)
-
-    recv_line(socket)
+    replace(socket, [{key, value}], options)
+    |> response_for(key)
   end
 
   def replace(socket, keys_and_values, options) do
     build_store_commmands("replace", keys_and_values, options)
     |> socket_send(socket)
 
-    errors = Enum.reduce(keys_and_values, %{}, fn {key, _value}, acc ->
-      case recv_line(socket) do
-        {:error, reason} -> Map.put(acc, key, reason)
-        _ -> acc
-      end
-    end)
-
-    if errors == %{} do
-      {:ok, :stored}
-    else
-      {:error, errors}
-    end
+    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
   end
 
   def get(socket, keys, options) when is_list(keys) do
@@ -104,32 +63,37 @@ defmodule Cream.Protocol.Ascii do
     end
   end
 
-  def delete(socket, keys, _options) when is_list(keys) do
+  def delete(socket, key, options) when not is_list(key) do
+    delete(socket, [key], options)
+    |> response_for(key)
+  end
+
+  def delete(socket, keys, _options) do
     Enum.map(keys, &"delete #{&1}\r\n")
     |> socket_send(socket)
 
-    errors = Enum.reduce(keys, %{}, fn key, acc ->
-      with {:ok, line} <- recv_line(socket) do
-        case line do
-          :deleted -> acc
-          reason -> Map.put(acc, key, reason)
-        end
-      else
-        {:error, reason} -> Map.put(acc, key, reason)
+    multi_response(keys, {:ok, "DELETED"}, :deleted, socket)
+  end
+
+  def multi_response(items, success_case, success_reason, socket) do
+    errors = Enum.reduce(items, %{}, fn item, acc ->
+      key = with {key, _value} <- item, do: key # item is either a {key, value} or just a key.
+      case recv_line(socket) do
+        ^success_case -> acc
+        {_status, reason} -> Map.put(acc, key, Reason.tr(reason))
       end
     end)
 
     if errors == %{} do
-      {:ok, :deleted}
+      {:ok, success_reason}
     else
       {:error, errors}
     end
   end
 
-  def delete(socket, key, options) do
-    case delete(socket, [key], options) do
-      {status, %{^key => reason}} -> {status, reason}
-      result -> result
+  defp response_for(response, key) do
+    with {status, %{^key => value}} <- response do
+      {status, value}
     end
   end
 
@@ -164,24 +128,23 @@ defmodule Cream.Protocol.Ascii do
   defp chomp(line), do: String.replace_suffix(line, "\r\n", "")
 
   defp recv_line(socket) do
-    :ok = :inet.setopts(socket, packet: :line)
-    with {:ok, line} = :gen_tcp.recv(socket, 0) do
+    with :ok <- :inet.setopts(socket, packet: :line),
+      {:ok, line} = :gen_tcp.recv(socket, 0)
+    do
       case chomp(line) do
         <<"SERVER_ERROR ", reason::binary>> -> {:error, reason}
-        <<"CLIENT_ERROR ", reason::binary>> ->
-          # I think this is a bug in memcached; any CLIENT_ERROR <reason>\r\n is followed by
-          # an ERROR\r\n. This is not the case for SERVER_ERROR <reason>\r\n lines.
-          case :gen_tcp.recv(socket, 0) do
-            {:ok, "ERROR\r\n"} -> {:error, reason}
-            error -> error
-          end
-        "STORED"      -> {:ok,    Reason.tr("STORED")}
-        "NOT_STORED"  -> {:error, Reason.tr("NOT_STORED")}
-        "EXISTS"      -> {:error, Reason.tr("EXISTS")}
-        "NOT_FOUND"   -> {:error, Reason.tr("NOT_FOUND")}
-        "DELETED"     -> {:ok,    Reason.tr("DELETED")}
+        <<"CLIENT_ERROR ", reason::binary>> -> swallow_error_line(socket, reason)
+        "ERROR" -> {:error, :unknown}
         line -> {:ok, line}
       end
+    end
+  end
+
+  # I think this is a bug in memcached; any CLIENT_ERROR <reason>\r\n is followed by
+  # an ERROR\r\n. This is not the case for SERVER_ERROR <reason>\r\n lines.
+  def swallow_error_line(socket, reason) do
+    with {:ok, "ERROR\r\n"} <- :gen_tcp.recv(socket, 0) do
+      {:error, reason}
     end
   end
 
