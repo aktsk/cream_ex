@@ -27,6 +27,10 @@ defmodule Cream.Protocol.Binary.Message do
   alias Cream.Protocol.Binary.Opcode
 
   def new(opcode, fields \\ []) do
+    fields = case fields[:value] do
+      {value, cas} -> Keyword.merge(fields, value: value, cas: cas)
+      _ -> fields
+    end
     %{struct!(__MODULE__, fields) | opcode: Opcode.to_atom(opcode)}
   end
 

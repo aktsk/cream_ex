@@ -140,7 +140,6 @@ defmodule ClientTest do
     end
   end
 
-  @tag :focus
   test "replace" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
@@ -199,6 +198,50 @@ defmodule ClientTest do
         "foo" => :not_found
       }}
       assert client.get(keys) == {:ok, %{}}
+    end
+  end
+
+  @tag :focus
+  test "cas" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      assert client.set({"name", "Callie"}) == {:ok, :stored}
+      assert {:ok, {"Callie", cas}} = client.get("name", cas: true)
+      assert client.set({"name", "Coco"}) == {:ok, :stored}
+      assert client.set({"name", {"Genevieve", cas}}) == {:error, :exists}
+      {:ok, {"Coco", cas}} = client.get("name", cas: true)
+      assert client.set({"name", {"Genevieve", cas}}) == {:ok, :stored}
+    end
+  end
+
+  test "multi cas" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      assert client.set(%{
+        "name_a" => "Callie1",
+        "name_b" => "Coco1",
+        "name_c" => "Genevieve1"
+      }) == {:ok, :stored}
+
+      {:ok, %{
+        "name_a" => {"Callie1", cas_a},
+        "name_b" => {"Coco1", cas_b},
+        "name_c" => {"Genevieve1", _cas_c}
+      }} = client.get(["name_a", "name_b", "name_c"], cas: true)
+
+      assert client.set(%{
+        "name_a" => {"Callie2", cas_a},
+        "name_b" => {"Coco2", cas_b+1},
+        "name_c" => "Genevieve2"
+      }) == {:error, %{"name_b" => :exists}}
+
+      assert client.get(["name_a", "name_b", "name_c"]) == {:ok, %{
+        "name_a" => "Callie2",
+        "name_b" => "Coco1",
+        "name_c" => "Genevieve2"
+      }}
     end
   end
 

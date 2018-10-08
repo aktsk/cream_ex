@@ -13,6 +13,8 @@ defmodule Cream.Protocol.Reason do
 
   def tr("DELETED"), do: :deleted
 
+  def tr("EXISTS"), do: :exists
+
   def tr("Too large."), do: "object too large for cache"
 
   def tr(reason), do: reason

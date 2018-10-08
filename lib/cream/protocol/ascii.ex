@@ -48,19 +48,19 @@ defmodule Cream.Protocol.Ascii do
     multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
   end
 
-  def get(socket, keys, options) when is_list(keys) do
-    Enum.reduce(keys, ["get"], &append(&2, &1))
+  def get(socket, key, options) when is_binary(key) do
+    case get(socket, [key], options) do
+      {status, values} -> {status, values[key]}
+    end
+  end
+
+  def get(socket, keys, options) do
+    cmd = if options[:cas], do: "gets", else: "get"
+    Enum.reduce(keys, [cmd], &append(&2, &1))
     |> append("\r\n", :trim)
     |> socket_send(socket)
 
     recv_values(socket, options[:coder])
-  end
-
-  def get(socket, key, options) do
-    case get(socket, [key], options) do
-      {:ok, values} -> {:ok, values[key]}
-      error -> error
-    end
   end
 
   def delete(socket, key, options) when not is_list(key) do
@@ -103,6 +103,15 @@ defmodule Cream.Protocol.Ascii do
   end
 
   defp build_store_command(cmd, key, value, options) do
+    # Value can be a tuple {value, cas} or just a value.
+    {value, cas} = with value when is_binary(value) <- value, do: {value, nil}
+
+    cmd = if cmd == "set" && cas do
+      "cas"
+    else
+      cmd
+    end
+
     {flags, value} = Coder.encode(options[:coder], value)
     exptime = options[:ttl]
     bytes = byte_size(value)
@@ -112,7 +121,7 @@ defmodule Cream.Protocol.Ascii do
     |> append(flags)
     |> append(exptime)
     |> append(bytes)
-    |> append(options[:cas])
+    |> append(cas)
     |> append(options[:noreply] && "noreply")
     |> append("\r\n", :trim)
     |> append(value, :trim)
@@ -166,7 +175,7 @@ defmodule Cream.Protocol.Ascii do
       ["END"] -> :end
       ["VALUE", key, flags, bytes, cas] ->
         case recv_bytes(socket, bytes) do
-          {:ok, value} -> {:ok, key, flags, {value, cas}}
+          {:ok, value} -> {:ok, key, flags, {value, String.to_integer(cas)}}
           error -> error
         end
       ["VALUE", key, flags, bytes] ->

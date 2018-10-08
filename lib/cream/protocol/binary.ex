@@ -55,7 +55,7 @@ defmodule Cream.Protocol.Binary do
     storage_commands(:set, keys_and_values, options)
     |> socket_send(socket)
 
-    storage_reponses(keys_and_values, socket)
+    storage_reponses(keys_and_values, socket, not_stored: :exists)
   end
 
   # Single add
@@ -86,26 +86,24 @@ defmodule Cream.Protocol.Binary do
     storage_reponses(keys_and_values, socket, not_found: :not_stored)
   end
 
-  def get(socket, keys, _options) when is_list(keys) do
+  def get(socket, key, options) when is_binary(key) do
+    case get(socket, [key], options) do
+      {status, values} -> {status, values[key]}
+    end
+  end
+
+  def get(socket, keys, options) do
     Enum.map(keys, &Message.binary(:getkq, key: &1))
     |> append(Message.binary(:noop))
     |> socket_send(socket)
 
     with {:ok, messages} <- recv_messages(socket) do
-      {:ok, Map.new(messages, &{&1.key, &1.value})}
-    end
-  end
-
-  def get(socket, key, _options) do
-    Message.binary(:get, key: key)
-    |> socket_send(socket)
-
-    with {:ok, message} <- recv_message(socket) do
-      case message do
-        %{status: 0, value: value} -> {:ok, value}
-        %{status: 1} -> {:ok, nil}
-        %{value: reason} -> {:error, Reason.tr(reason)}
+      values = if options[:cas] do
+        Map.new(messages, &{&1.key, {&1.value, &1.cas}})
+      else
+        Map.new(messages, &{&1.key, &1.value})
       end
+      {:ok, values}
     end
   end
 
@@ -149,9 +147,8 @@ defmodule Cream.Protocol.Binary do
   # Most non-multi commands just delegate to multi version of the command,
   # then extract a single value to return. This function does this.
   defp response_for(response, key) do
-    case response do
-      {:error, %{^key => reason}} -> {:error, reason}
-      response -> response
+    with {status, %{^key => reason}} <- response do
+      {status, reason}
     end
   end
 
