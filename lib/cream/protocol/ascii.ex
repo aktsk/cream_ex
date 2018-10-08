@@ -5,8 +5,8 @@ defmodule Cream.Protocol.Ascii do
 
   def flush(socket, options) do
     ["flush_all"]
-    |> cmd(options[:delay])
-    |> cmd("\r\n", :trim)
+    |> append(options[:delay])
+    |> append("\r\n", :trim)
     |> socket_send(socket)
 
     recv_line(socket)
@@ -90,8 +90,8 @@ defmodule Cream.Protocol.Ascii do
   end
 
   def get(socket, keys, options) when is_list(keys) do
-    Enum.reduce(keys, ["get"], &cmd(&2, &1))
-    |> cmd("\r\n", :trim)
+    Enum.reduce(keys, ["get"], &append(&2, &1))
+    |> append("\r\n", :trim)
     |> socket_send(socket)
 
     recv_values(socket, options[:coder])
@@ -144,22 +144,22 @@ defmodule Cream.Protocol.Ascii do
     bytes = byte_size(value)
 
     [cmd]
-    |> cmd(key)
-    |> cmd(flags)
-    |> cmd(exptime)
-    |> cmd(bytes)
-    |> cmd(options[:cas])
-    |> cmd(options[:noreply] && "noreply")
-    |> cmd("\r\n", :trim)
-    |> cmd(value, :trim)
-    |> cmd("\r\n", :trim)
+    |> append(key)
+    |> append(flags)
+    |> append(exptime)
+    |> append(bytes)
+    |> append(options[:cas])
+    |> append(options[:noreply] && "noreply")
+    |> append("\r\n", :trim)
+    |> append(value, :trim)
+    |> append("\r\n", :trim)
   end
 
-  defp cmd(command, arg, trim \\ nil)
-  defp cmd(command, nil, _trim), do: command
-  defp cmd(command, "", _trim), do: command
-  defp cmd(command, arg, nil), do: [command, " ", to_string(arg)]
-  defp cmd(command, arg, :trim), do: [command, to_string(arg)]
+  defp append(command, arg, trim \\ nil)
+  defp append(command, nil, _trim), do: command
+  defp append(command, "", _trim), do: command
+  defp append(command, arg, nil), do: [command, " ", to_string(arg)]
+  defp append(command, arg, :trim), do: [command, to_string(arg)]
 
   defp chomp(line), do: String.replace_suffix(line, "\r\n", "")
 
