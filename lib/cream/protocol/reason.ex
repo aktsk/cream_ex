@@ -11,5 +11,7 @@ defmodule Cream.Protocol.Reason do
   def tr("Data exists for key."), do: :not_stored
   def tr("NOT_STORED"), do: :not_stored
 
+  def tr("DELETED"), do: :deleted
+
   def tr("Too large."), do: "object too large for cache"
 end

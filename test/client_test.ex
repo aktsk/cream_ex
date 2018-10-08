@@ -168,4 +168,37 @@ defmodule ClientTest do
     end
   end
 
+  test "delete" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      keys_and_values = %{"name" => "Callie", "species" => "canine"}
+
+      client.set(keys_and_values)
+      assert client.get(["name", "species"]) == {:ok, keys_and_values}
+
+      assert client.delete("species") == {:ok, :deleted}
+      assert client.get(["name", "species"]) == {:ok, %{"name" => "Callie"}}
+    end
+  end
+
+  test "multi delete" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      keys_and_values = %{"name" => "Callie", "species" => "canine"}
+      keys = Map.keys(keys_and_values)
+
+      assert client.set(keys_and_values) == {:ok, :stored}
+      assert client.delete(keys) == {:ok, :deleted}
+      assert client.get(keys) == {:ok, %{}}
+
+      assert client.set(keys_and_values) == {:ok, :stored}
+      assert client.delete(keys ++ ["foo"]) == {:error, %{
+        "foo" => :not_found
+      }}
+      assert client.get(keys) == {:ok, %{}}
+    end
+  end
+
 end

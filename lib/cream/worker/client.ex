@@ -40,6 +40,10 @@ defmodule Cream.Worker.Client do
     protocol(:get, [keys], options, state)
   end
 
+  def handle_call({:delete, keys, options}, _from, state) do
+    protocol(:delete, [keys], options, state)
+  end
+
   def handle_call({:flush, options}, _from, state) do
     protocol(:flush, [], options, state)
   end

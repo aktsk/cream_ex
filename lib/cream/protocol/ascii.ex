@@ -104,6 +104,35 @@ defmodule Cream.Protocol.Ascii do
     end
   end
 
+  def delete(socket, keys, _options) when is_list(keys) do
+    Enum.map(keys, &"delete #{&1}\r\n")
+    |> socket_send(socket)
+
+    errors = Enum.reduce(keys, %{}, fn key, acc ->
+      with {:ok, line} <- recv_line(socket) do
+        case line do
+          :deleted -> acc
+          reason -> Map.put(acc, key, reason)
+        end
+      else
+        {:error, reason} -> Map.put(acc, key, reason)
+      end
+    end)
+
+    if errors == %{} do
+      {:ok, :deleted}
+    else
+      {:error, errors}
+    end
+  end
+
+  def delete(socket, key, options) do
+    case delete(socket, [key], options) do
+      {status, %{^key => reason}} -> {status, reason}
+      result -> result
+    end
+  end
+
   defp build_store_commmands(cmd, keys_and_values, options) do
     keys_and_values
     |> Enum.map(fn {key, value} -> build_store_command(cmd, key, value, options) end)
@@ -150,6 +179,7 @@ defmodule Cream.Protocol.Ascii do
         "NOT_STORED"  -> {:error, Reason.tr("NOT_STORED")}
         "EXISTS"      -> {:error, Reason.tr("EXISTS")}
         "NOT_FOUND"   -> {:error, Reason.tr("NOT_FOUND")}
+        "DELETED"     -> {:ok,    Reason.tr("DELETED")}
         line -> {:ok, line}
       end
     end

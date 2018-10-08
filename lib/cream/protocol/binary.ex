@@ -17,6 +17,33 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
+  def delete(socket, key, options) when not is_list(key) do
+    delete(socket, [key], options)
+    |> response_for(key)
+  end
+
+  def delete(socket, keys, _options) do
+    Enum.map(keys, &Message.binary(:delete, key: &1))
+    |> socket_send(socket)
+
+    errors = Enum.reduce(keys, %{}, fn key, acc ->
+      with {:ok, message} <- recv_message(socket) do
+        case message do
+          %{status: 0} -> acc
+          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
+        end
+      else
+        {:error, reason} -> Map.put(acc, key, reason)
+      end
+    end)
+
+    if errors == %{} do
+      {:ok, :deleted}
+    else
+      {:error, errors}
+    end
+  end
+
   # Single set
   def set(socket, {key, value}, options) do
     set(socket, [{key, value}], options)
@@ -119,6 +146,8 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
+  # Most non-multi commands just delegate to multi version of the command,
+  # then extract a single value to return. This function does this.
   defp response_for(response, key) do
     case response do
       {:error, %{^key => reason}} -> {:error, reason}
@@ -126,6 +155,7 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
+  # For building up iolists.
   defp append(list, item), do: [list, item]
 
   defp extra(:store, options) do
