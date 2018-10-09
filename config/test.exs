@@ -7,9 +7,6 @@ config :cream, Test.Cluster,
 config :logger,
   level: :info
 
-config :cream, Cream.Test.Client,
-  server: "localhost:11201"
-
 config :cream, Cream.Test.BinaryClient,
   server: "localhost:11201",
   protocol: :binary

@@ -20,6 +20,22 @@ defmodule ClientTest do
     end
   end
 
+  test "set and get" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+      assert client.set({"name", "Callie"}) == {:ok, :stored}
+      assert client.get("name") == {:ok, "Callie"}
+    end
+  end
+
+  test "set! and get!" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+      assert client.set!({"name", "Callie"}) == :stored
+      assert client.get!("name") == "Callie"
+    end
+  end
+
   test "set client error" do
     AsciiClient.flush
     assert AsciiClient.set({"foo", "bar"}, ttl: "tomorrow") == {:error, "bad command line format"}
@@ -52,22 +68,6 @@ defmodule ClientTest do
         "foo" => "object too large for cache",
         "baz" => "object too large for cache"
       }}
-    end
-  end
-
-  test "set and get" do
-    Enum.each [AsciiClient, BinaryClient], fn client ->
-      client.flush
-      assert client.set({"name", "Callie"}) == {:ok, :stored}
-      assert client.get("name") == {:ok, "Callie"}
-    end
-  end
-
-  test "set! and get!" do
-    Enum.each [AsciiClient, BinaryClient], fn client ->
-      client.flush
-      assert client.set!({"name", "Callie"}) == :stored
-      assert client.get!("name") == "Callie"
     end
   end
 
@@ -201,7 +201,6 @@ defmodule ClientTest do
     end
   end
 
-  @tag :focus
   test "cas" do
     Enum.each [AsciiClient, BinaryClient], fn client ->
       client.flush
@@ -242,6 +241,19 @@ defmodule ClientTest do
         "name_b" => "Coco1",
         "name_c" => "Genevieve2"
       }}
+    end
+  end
+
+  test "coder" do
+    Enum.each [AsciiClient, BinaryClient], fn client ->
+      client.flush
+
+      client.set({"name", "Callie"}, coder: Cream.Coder.Marshal)
+      value = client.get!("name")
+
+      assert value != "Callie"
+      assert ExMarshal.decode(value) == "Callie"
+      assert client.get!("name", coder: Cream.Coder.Marshal) == "Callie"
     end
   end
 

@@ -2,11 +2,12 @@ defmodule Cream.Protocol.Binary do
 
   alias Cream.Protocol.Binary.Message
   alias Cream.Protocol.Reason
+  alias Cream.Coder
+
+  import Cream.Helper
 
   def flush(socket, options) do
-    extra = extra(:flush, options)
-
-    Message.binary(:flush, extra: extra)
+    Message.iolist(:flush, extras: [ttl: options[:ttl]])
     |> socket_send(socket)
 
     with {:ok, message} <- recv_message(socket) do
@@ -23,7 +24,7 @@ defmodule Cream.Protocol.Binary do
   end
 
   def delete(socket, keys, _options) do
-    Enum.map(keys, &Message.binary(:delete, key: &1))
+    Enum.map(keys, &Message.iolist(:delete, key: &1))
     |> socket_send(socket)
 
     errors = Enum.reduce(keys, %{}, fn key, acc ->
@@ -93,27 +94,31 @@ defmodule Cream.Protocol.Binary do
   end
 
   def get(socket, keys, options) do
-    Enum.map(keys, &Message.binary(:getkq, key: &1))
-    |> append(Message.binary(:noop))
+    Enum.map(keys, &Message.iolist(:getkq, key: &1))
+    |> iolist_append(Message.iolist(:noop))
     |> socket_send(socket)
 
     with {:ok, messages} <- recv_messages(socket) do
-      values = if options[:cas] do
-        Map.new(messages, &{&1.key, {&1.value, &1.cas}})
-      else
-        Map.new(messages, &{&1.key, &1.value})
-      end
+      values = Map.new(messages, fn message ->
+        value = Coder.decode(options[:coder], message.extras[:flags], message.value)
+        value = if options[:cas] do
+          {value, message.cas}
+        else
+          value
+        end
+        {message.key, value}
+      end)
       {:ok, values}
     end
   end
 
   defp storage_commands(opcode, keys_and_values, options) do
-    extra = extra(:store, options)
-
     Enum.map(keys_and_values, fn {key, value} ->
-      Message.binary(opcode, key: key, value: value, extra: extra)
+      {flags, value} = Coder.encode(options[:coder], value)
+      extras = [flags: flags, ttl: options[:ttl]]
+      Message.iolist(opcode, key: key, value: value, extras: extras)
     end)
-    |> append(Message.binary(:noop))
+    |> iolist_append(Message.new(:noop))
   end
 
   defp storage_reponses(keys_and_values, socket, tr_reason \\ []) do
@@ -152,33 +157,6 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
-  # For building up iolists.
-  defp append(list, item), do: [list, item]
-
-  defp extra(:store, options) do
-    flags = if options[:coder], do: 1, else: 0
-    ttl = options[:ttl]
-
-    <<
-      flags :: size(32),
-      ttl   :: size(32)
-    >>
-  end
-
-  defp extra(:flush, options) do
-    if options[:delay] do
-      <<options[:delay] :: size(32)>>
-    else
-      <<>>
-    end
-  end
-
-  defp recv_message(socket) do
-    with {:ok, message} <- recv_header(socket) do
-      recv_body(message, socket)
-    end
-  end
-
   def recv_header(socket) do
     with {:ok, data} <- :gen_tcp.recv(socket, 24) do
       {:ok, Message.from_binary(data)}
@@ -201,8 +179,14 @@ defmodule Cream.Protocol.Binary do
     end
   end
 
-  defp socket_send(data, socket) do
-    :ok = :gen_tcp.send(socket, data)
+  defp recv_message(socket) do
+    with {:ok, message} <- recv_header(socket) do
+      recv_body(message, socket)
+    end
+  end
+
+  defp socket_send(iolist, socket) do
+    :ok = :gen_tcp.send(socket, iolist)
   end
 
 end

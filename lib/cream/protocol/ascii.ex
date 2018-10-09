@@ -12,11 +12,13 @@ defmodule Cream.Protocol.Ascii do
     with {:ok, "OK"} <- recv_line(socket), do: {:ok, :flushed}
   end
 
+  # Single set
   def set(socket, {key, value}, options) do
     set(socket, [{key, value}], options)
     |> response_for(key)
   end
 
+  # Multi set
   def set(socket, keys_and_values, options) do
     build_store_commmands("set", keys_and_values, options)
     |> socket_send(socket)
@@ -48,12 +50,14 @@ defmodule Cream.Protocol.Ascii do
     multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
   end
 
+  # Single get
   def get(socket, key, options) when is_binary(key) do
     case get(socket, [key], options) do
       {status, values} -> {status, values[key]}
     end
   end
 
+  # Multi get
   def get(socket, keys, options) do
     cmd = if options[:cas], do: "gets", else: "get"
     Enum.reduce(keys, [cmd], &append(&2, &1))

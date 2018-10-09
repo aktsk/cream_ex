@@ -24,6 +24,10 @@ defmodule Cream.Worker.Client do
     end
   end
 
+  def handle_call(:defaults, _from, state) do
+    {:reply, state.options, state}
+  end
+
   def handle_call({:set, keys_and_values, options}, _from, state) do
     protocol(:set, [keys_and_values], options, state)
   end

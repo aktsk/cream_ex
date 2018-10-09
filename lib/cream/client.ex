@@ -99,6 +99,7 @@ defmodule Cream.Client do
         Cream.Client.start_link(__MODULE__, @otp_app, config)
       end
 
+      def defaults, do: Cream.Client.defaults(__MODULE__)
       def get(key_or_keys, opts \\ []), do: Cream.Client.get(__MODULE__, key_or_keys, opts)
       def get!(key_or_keys, opts \\ []), do: Cream.Client.get!(__MODULE__, key_or_keys, opts)
 
@@ -165,6 +166,10 @@ defmodule Cream.Client do
     with {:ok, config} <- mod.init(config) do
       Keyword.merge(config, opts) |> start_link(name: mod)
     end
+  end
+
+  def defaults(pool) do
+    call(pool, :defaults)
   end
 
   def set(pool, keys_and_values, options \\ []) do
