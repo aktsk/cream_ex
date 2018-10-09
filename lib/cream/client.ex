@@ -100,6 +100,7 @@ defmodule Cream.Client do
       end
 
       def defaults, do: Cream.Client.defaults(__MODULE__)
+
       def get(key_or_keys, opts \\ []), do: Cream.Client.get(__MODULE__, key_or_keys, opts)
       def get!(key_or_keys, opts \\ []), do: Cream.Client.get!(__MODULE__, key_or_keys, opts)
 
