@@ -1,84 +1,45 @@
 defmodule Cream.Worker.Client do
-  defstruct [:options, :socket]
   use GenServer
-  require Logger
 
-  alias Cream.Protocol
+  defstruct [:options, :connections, :continuum]
 
-  def start_link(options) do
-    GenServer.start_link(__MODULE__, options)
+  alias Cream.{Connection, Continuum}
+
+  def start_link(options, gs_options) do
+    GenServer.start_link(__MODULE__, options, gs_options)
   end
 
-  @defaults [
-    protocol: Protocol.Binary,
-    ttl: 0
-  ]
   def init(options) do
-    options = Keyword.merge(@defaults, options)
+    connections = Map.new(options[:servers], fn server ->
+      {:ok, pid} =
+        options
+        |> Keyword.put(:server, server)
+        |> Keyword.delete(:name)
+        |> Connection.start_link
+      {server, pid}
+    end)
 
-    case establish_connection(options) do
-      {:ok, socket} ->
-        {:ok, %__MODULE__{options: options, socket: socket}}
-      {:error, _reason} ->
-        {:connect, nil, %__MODULE__{options: options}}
-    end
+    {
+      :ok,
+      %__MODULE__{
+        options: options,
+        connections: connections,
+        continuum: Continuum.new(options[:servers])
+      }
+    }
   end
 
-  def handle_call(:defaults, _from, state) do
+  def handle_call(:debug, _from, state) do
+    {:reply, state, state}
+  end
+
+  def handle_call(:options, _from, state) do
     {:reply, state.options, state}
   end
 
-  def handle_call({:set, keys_and_values, options}, _from, state) do
-    protocol(:set, [keys_and_values], options, state)
-  end
-
-  def handle_call({:add, keys_and_values, options}, _from, state) do
-    protocol(:add, [keys_and_values], options, state)
-  end
-
-  def handle_call({:replace, keys_and_values, options}, _from, state) do
-    protocol(:replace, [keys_and_values], options, state)
-  end
-
-  def handle_call({:get, keys, options}, _from, state) do
-    protocol(:get, [keys], options, state)
-  end
-
-  def handle_call({:delete, keys, options}, _from, state) do
-    protocol(:delete, [keys], options, state)
-  end
-
-  def handle_call({:flush, options}, _from, state) do
-    protocol(:flush, [], options, state)
-  end
-
-  defp establish_connection(options) do
-    [host, port] = options[:server] |> String.split(":")
-
-    host = String.to_charlist(host)
-    port = String.to_integer(port)
-
-    case :gen_tcp.connect(host, port, [:binary, active: false]) do
-      {:error, reason} = value ->
-        Logger.warn("ERROR: establishing connection to #{options[:server]}: #{reason}")
-        value
-      value -> value
-    end
-  end
-
-  defp protocol(func_name, args, options, state) do
-    options = Keyword.merge(state.options, options)
-
-    module = case options[:protocol] do
-      :ascii  -> Protocol.Ascii
-      :text   -> Protocol.Ascii
-      :binary -> Protocol.Binary
-      module  -> module
-    end
-
-    args = [state.socket] ++ args ++ [options]
-
-    {:reply, apply(module, func_name, args), state}
+  # If there is no continuum (only one connection), then we can just passthrough.
+  def handle_call(args, _from, %{connections: connection, continuum: nil} = state) do
+    {:reply, GenServer.call(connection, args), state}
   end
 
 end

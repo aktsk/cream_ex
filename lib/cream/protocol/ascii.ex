@@ -1,7 +1,68 @@
 defmodule Cream.Protocol.Ascii do
 
-  alias Cream.Coder
+  alias Cream.{Coder, Utils}
   alias Cream.Protocol.Reason
+
+  def set(socket, keys_and_values, options) do
+    build_store_commmands("set", keys_and_values, options)
+    |> socket_send(socket)
+
+    keys_and_values
+    |> Utils.stream_keys
+    |> keyed_response(socket, :set)
+  end
+
+  # def add(socket, {key, value}, options) do
+  #   add(socket, [{key, value}], options)
+  #   |> response_for(key)
+  # end
+  #
+  # def add(socket, keys_and_values, options) do
+  #   build_store_commmands("add", keys_and_values, options)
+  #   |> socket_send(socket)
+  #
+  #   multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
+  # end
+  #
+  # def replace(socket, {key, value}, options) do
+  #   replace(socket, [{key, value}], options)
+  #   |> response_for(key)
+  # end
+  #
+  # def replace(socket, keys_and_values, options) do
+  #   build_store_commmands("replace", keys_and_values, options)
+  #   |> socket_send(socket)
+  #
+  #   multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
+  # end
+  
+  def get(socket, keys, options) do
+    opcode = if options[:cas], do: :gets, else: :get
+    Enum.reduce(keys, [opcode], &append(&2, &1))
+    |> append("\r\n", :trim)
+    |> socket_send(socket)
+
+    Stream.repeatedly(fn -> recv_message(socket, opcode) end)
+    |> Stream.take_while(fn
+      {:ok, :end} -> false
+      _ -> true
+    end)
+    |> Enum.reduce({:ok, %{}}, fn message, {status, acc} ->
+
+    end)
+  end
+
+  # def delete(socket, key, options) when not is_list(key) do
+  #   delete(socket, [key], options)
+  #   |> response_for(key)
+  # end
+  #
+  # def delete(socket, keys, _options) do
+  #   Enum.map(keys, &"delete #{&1}\r\n")
+  #   |> socket_send(socket)
+  #
+  #   multi_response(keys, {:ok, "DELETED"}, :deleted, socket)
+  # end
 
   def flush(socket, options) do
     ["flush_all"]
@@ -9,97 +70,80 @@ defmodule Cream.Protocol.Ascii do
     |> append("\r\n", :trim)
     |> socket_send(socket)
 
-    with {:ok, "OK"} <- recv_line(socket), do: {:ok, :flushed}
+    recv_message(socket, :flush)
   end
 
-  # Single set
-  def set(socket, {key, value}, options) do
-    set(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  # Multi set
-  def set(socket, keys_and_values, options) do
-    build_store_commmands("set", keys_and_values, options)
-    |> socket_send(socket)
-
-    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
-  end
-
-  def add(socket, {key, value}, options) do
-    add(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  def add(socket, keys_and_values, options) do
-    build_store_commmands("add", keys_and_values, options)
-    |> socket_send(socket)
-
-    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
-  end
-
-  def replace(socket, {key, value}, options) do
-    replace(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  def replace(socket, keys_and_values, options) do
-    build_store_commmands("replace", keys_and_values, options)
-    |> socket_send(socket)
-
-    multi_response(keys_and_values, {:ok, "STORED"}, :stored, socket)
-  end
-
-  # Single get
-  def get(socket, key, options) when is_binary(key) do
-    case get(socket, [key], options) do
-      {status, values} -> {status, values[key]}
-    end
-  end
-
-  # Multi get
-  def get(socket, keys, options) do
-    cmd = if options[:cas], do: "gets", else: "get"
-    Enum.reduce(keys, [cmd], &append(&2, &1))
-    |> append("\r\n", :trim)
-    |> socket_send(socket)
-
-    recv_values(socket, options[:coder])
-  end
-
-  def delete(socket, key, options) when not is_list(key) do
-    delete(socket, [key], options)
-    |> response_for(key)
-  end
-
-  def delete(socket, keys, _options) do
-    Enum.map(keys, &"delete #{&1}\r\n")
-    |> socket_send(socket)
-
-    multi_response(keys, {:ok, "DELETED"}, :deleted, socket)
-  end
-
-  def multi_response(items, success_case, success_reason, socket) do
-    errors = Enum.reduce(items, %{}, fn item, acc ->
-      key = with {key, _value} <- item, do: key # item is either a {key, value} or just a key.
-      case recv_line(socket) do
-        ^success_case -> acc
-        {_status, reason} -> Map.put(acc, key, Reason.tr(reason))
+  def keyed_response(keys, socket, opcode) do
+    Enum.reduce keys, {:ok, %{}}, fn key, {status, acc} ->
+      case recv_message(socket, opcode) do
+        {:ok, result} ->
+          Map.update(acc, result, [key], &[key | &1])
+          |> Utils.return_tuple(status)
+        {:error, reason} ->
+          Map.update(acc, :errors, %{reason => [key]}, fn errors ->
+            Map.update(errors, reason, [key], &[key | &1])
+          end)
+          |> Utils.return_tuple(:error)
       end
-    end)
-
-    if errors == %{} do
-      {:ok, success_reason}
-    else
-      {:error, errors}
     end
   end
 
-  defp response_for(response, key) do
-    with {status, %{^key => value}} <- response do
-      {status, value}
+  @opcodes [:get, :gets]
+  defp recv_message(socket, opcode) when opcode in @opcodes do
+    with {:ok, line} <- recv_line(socket),
+      {key, flags, byte_size, cas} = parse_value_line(line),
+      {:ok, value} <- recv_value(socket, byte_size)
+    do
+      {:ok, {key, value, flags, cas}}
     end
   end
+
+  @opcodes [:set, :add, :replace, :delete, :flush]
+  defp recv_message(socket, opcode) when opcode in @opcodes do
+    with {:ok, line} <- recv_line(socket) do
+      case {opcode, line} do
+        {:add,      "NOT_STORED\r\n"} -> {:ok, :exists   }
+        {:replace,  "NOT_STORED\r\n"} -> {:ok, :not_found}
+        {:delete,   "DELETED\r\n"   } -> {:ok, :deleted  }
+        {:delete,   "NOT_FOUND\r\n" } -> {:ok, :not_found}
+        {:flush,    "OK\r\n"        } -> {:ok, :flushed  }
+        {_,         "STORED\r\n"    } -> {:ok, :stored   }
+      end
+    end
+  end
+
+  defp parse_value_line(line) do
+    case line |> chomp |> String.split(" ") do
+      ["END"] -> :end
+      ["VALUE", key, flags, byte_size] -> {key, flags, byte_size, nil}
+      ["VALUE", key, flags, byte_size, cas] -> {key, flags, byte_size, cas}
+    end
+  end
+
+
+  # def multi_response(keys, success_case, success_reason, socket) do
+  #   errors = Enum.reduce(keys, %{}, fn key, acc ->
+  #
+  #
+  #     key = with {key, _value} <- item, do: key # item is either a {key, value} or just a key.
+  #     case recv_line(socket) do
+  #       ^success_case -> acc
+  #       {_status, reason} -> Map.put(acc, key, Reason.tr(reason))
+  #     end
+  #   end)
+  #
+  #   if errors == %{} do
+  #     {:ok, success_reason}
+  #   else
+  #     {:error, errors}
+  #   end
+  # end
+
+  # defp response_for(response, key) do
+  #   with {status, %{^key => value}} <- response do
+  #     {status, value}
+  #   end
+  # end
 
   defp build_store_commmands(cmd, keys_and_values, options) do
     keys_and_values
@@ -144,10 +188,10 @@ defmodule Cream.Protocol.Ascii do
     with :ok <- :inet.setopts(socket, packet: :line),
       {:ok, line} = :gen_tcp.recv(socket, 0)
     do
-      case chomp(line) do
-        <<"SERVER_ERROR ", reason::binary>> -> {:error, reason}
-        <<"CLIENT_ERROR ", reason::binary>> -> swallow_error_line(socket, reason)
-        "ERROR" -> {:error, :unknown}
+      case line do
+        <<"SERVER_ERROR ", reason::binary>> -> {:error, chomp(reason)}
+        <<"CLIENT_ERROR ", reason::binary>> -> swallow_error_line(socket, chomp(reason))
+        "ERROR\r\n" -> {:error, :unknown}
         line -> {:ok, line}
       end
     end
@@ -161,42 +205,45 @@ defmodule Cream.Protocol.Ascii do
     end
   end
 
-  defp recv_values(socket, coder, values \\ %{}) do
-    with {:ok, line} <- recv_line(socket),
-      {:ok, key, flags, value} <- recv_value(socket, line)
-    do
-      value = Coder.decode(coder, flags, value)
-      values = Map.put(values, key, value)
-      recv_values(socket, coder, values)
-    else
-      :end -> {:ok, values}
-      error -> error
-    end
-  end
+  # defp recv_values(socket, coder, values \\ %{}) do
+  #   with {:ok, line} <- recv_line(socket),
+  #     {:ok, key, flags, value} <- recv_value(socket, line)
+  #   do
+  #     value = Coder.decode(coder, flags, value)
+  #     values = Map.put(values, key, value)
+  #     recv_values(socket, coder, values)
+  #   else
+  #     :end -> {:ok, values}
+  #     error -> error
+  #   end
+  # end
 
-  defp recv_value(socket, line) do
-    case String.split(line, " ") do
-      ["END"] -> :end
-      ["VALUE", key, flags, bytes, cas] ->
-        case recv_bytes(socket, bytes) do
-          {:ok, value} -> {:ok, key, flags, {value, String.to_integer(cas)}}
-          error -> error
-        end
-      ["VALUE", key, flags, bytes] ->
-        case recv_bytes(socket, bytes) do
-          {:ok, value} -> {:ok, key, flags, value}
-          error -> error
-        end
-    end
-  end
+  # defp recv_value(socket, byte_size) do
+  #   with {:ok, value} <- recv_bytes(socket, byte_size) do
+  #     {:ok, chomp(value)}
+  #   end
+  # end
 
-  defp recv_bytes(socket, n) do
+  # defp recv_value(socket, line) do
+  #   case line |> chomp |> String.split(" ") do
+  #     ["END"] -> :end
+  #     ["VALUE", key, flags, bytes, cas] ->
+  #       case recv_bytes(socket, bytes) do
+  #         {:ok, value} -> {:ok, key, flags, {value, String.to_integer(cas)}}
+  #         error -> error
+  #       end
+  #     ["VALUE", key, flags, bytes] ->
+  #       case recv_bytes(socket, bytes) do
+  #         {:ok, value} -> {:ok, key, flags, value}
+  #         error -> error
+  #       end
+  #   end
+  # end
+
+  defp recv_value(socket, n) do
     :ok = :inet.setopts(socket, packet: :raw)
     n = String.to_integer(n)
-    case :gen_tcp.recv(socket, n + 2) do
-      {:ok, data} -> {:ok, chomp(data)}
-      error -> error
-    end
+    with {:ok, data} <- :gen_tcp.recv(socket, n + 2), do: {:ok, chomp(data)}
   end
 
   defp socket_send(data, socket) do

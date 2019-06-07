@@ -1,4 +1,3 @@
 ExUnit.start()
-{:ok, _} = Test.Cluster.start_link
-{:ok, _} = Cream.Test.BinaryClient.start_link
-{:ok, _} = Cream.Test.AsciiClient.start_link
+{:ok, _} = Cream.Test.BinaryConnection.start_link
+{:ok, _} = Cream.Test.AsciiConnection.start_link

@@ -1,96 +1,35 @@
 defmodule Cream.Protocol.Binary do
 
-  alias Cream.Protocol.Binary.Message
-  alias Cream.Protocol.Reason
-  alias Cream.Coder
+  alias Cream.Protocol.Binary.{Message, Error}
+  alias Cream.{Coder, Utils}
 
-  import Cream.Helper
+  import Cream.Utils, only: [iolist_append: 2]
 
-  def flush(socket, options) do
-    Message.iolist(:flush, extras: [ttl: options[:ttl]])
-    |> socket_send(socket)
-
-    with {:ok, message} <- recv_message(socket) do
-      case message do
-        %{status: 0} -> {:ok, :flushed}
-        %{value: reason} -> {:error, Reason.tr(reason)}
-      end
-    end
-  end
-
-  def delete(socket, key, options) when not is_list(key) do
-    delete(socket, [key], options)
-    |> response_for(key)
-  end
-
-  def delete(socket, keys, _options) do
-    Enum.map(keys, &Message.iolist(:delete, key: &1))
-    |> socket_send(socket)
-
-    errors = Enum.reduce(keys, %{}, fn key, acc ->
-      with {:ok, message} <- recv_message(socket) do
-        case message do
-          %{status: 0} -> acc
-          %{value: reason} -> Map.put(acc, key, Reason.tr(reason))
-        end
-      else
-        {:error, reason} -> Map.put(acc, key, reason)
-      end
-    end)
-
-    if errors == %{} do
-      {:ok, :deleted}
-    else
-      {:error, errors}
-    end
-  end
-
-  # Single set
-  def set(socket, {key, value}, options) do
-    set(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  # Multi set
   def set(socket, keys_and_values, options) do
     storage_commands(:set, keys_and_values, options)
     |> socket_send(socket)
 
-    storage_reponses(keys_and_values, socket, not_stored: :exists)
+    keys_and_values
+    |> Utils.stream_keys
+    |> keyed_response(socket, :stored)
   end
 
-  # Single add
-  def add(socket, {key, value}, options) do
-    add(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  # Multi add
   def add(socket, keys_and_values, options) do
     storage_commands(:add, keys_and_values, options)
     |> socket_send(socket)
 
-    storage_reponses(keys_and_values, socket)
+    keys_and_values
+    |> Utils.stream_keys
+    |> keyed_response(socket, :stored)
   end
 
-  # Single replace
-  def replace(socket, {key, value}, options) do
-    replace(socket, [{key, value}], options)
-    |> response_for(key)
-  end
-
-  # Multi replace
   def replace(socket, keys_and_values, options) do
     storage_commands(:replace, keys_and_values, options)
     |> socket_send(socket)
 
-    storage_reponses(keys_and_values, socket, not_found: :not_stored)
-  end
-
-  def get(socket, key, options) when is_binary(key) do
-    case get(socket, [key], options) do
-      {status, values} -> {status, values[key]}
-    end
+    keys_and_values
+    |> Utils.stream_keys
+    |> keyed_response(socket, :stored)
   end
 
   def get(socket, keys, options) do
@@ -99,16 +38,33 @@ defmodule Cream.Protocol.Binary do
     |> socket_send(socket)
 
     with {:ok, messages} <- recv_messages(socket) do
-      values = Map.new(messages, fn message ->
-        value = Coder.decode(options[:coder], message.extras[:flags], message.value)
-        value = if options[:cas] do
-          {value, message.cas}
-        else
-          value
-        end
+      Map.new(messages, fn message ->
+        value = decode_and_cas(message, options)
         {message.key, value}
       end)
-      {:ok, values}
+      |> Utils.return_tuple(:ok)
+    else
+      {:error, reason} -> keyed_error(keys, reason)
+    end
+  end
+
+  def delete(socket, keys, _options) do
+    Enum.map(keys, &Message.iolist(:delete, key: &1))
+    |> iolist_append(Message.new(:noop))
+    |> socket_send(socket)
+
+    keyed_response(keys, socket, :deleted)
+  end
+
+  def flush(socket, options) do
+    Message.iolist(:flush, extras: [ttl: options[:ttl]])
+    |> socket_send(socket)
+
+    with {:ok, message} <- recv_message(socket) do
+      case message do
+        %{status: 0} -> {:ok, :flushed}
+        %{status: status} -> {:error, Error.to_atom(status)}
+      end
     end
   end
 
@@ -121,39 +77,34 @@ defmodule Cream.Protocol.Binary do
     |> iolist_append(Message.new(:noop))
   end
 
-  defp storage_reponses(keys_and_values, socket, tr_reason \\ []) do
+  defp keyed_response(keys, socket, success_status) do
     with {:ok, messages} <- recv_messages(socket) do
-      errors =
-        keys_and_values
-        |> Stream.zip(messages)
-        |> Enum.reduce(%{}, fn {{key, _value}, message}, acc ->
-          case message do
-            %{status: 0} -> acc
-            %{value: reason} ->
-              reason = Reason.tr(reason)
-              # Ugh, binary protocol responds with :not_found for :replace commands while
-              # the ascii protocol responds with :not_stored. tr_reason argument is to override.
-              reason = case tr_reason do
-                [{^reason, reason}] -> reason
-                _ -> reason
-              end
-              Map.put(acc, key, reason)
-          end
-        end)
-
-      if errors == %{} do
-        {:ok, :stored}
-      else
-        {:error, errors}
-      end
+      Stream.zip(keys, messages)
+      |> Enum.reduce(%{}, fn {key, message}, acc ->
+        status = Error.to_atom(message.status) || success_status
+        Map.update(acc, status, [key], fn list -> [key | list] end)
+      end)
+      |> Utils.return_tuple(:ok)
+    else
+      {:error, reason} -> keyed_error(keys, reason)
     end
   end
 
-  # Most non-multi commands just delegate to multi version of the command,
-  # then extract a single value to return. This function does this.
-  defp response_for(response, key) do
-    with {status, %{^key => reason}} <- response do
-      {status, reason}
+  defp keyed_error(keys, reason) when is_list(keys) do
+    {:error, %{errors: %{reason => keys}}}
+  end
+
+  # keys could be a stream.
+  defp keyed_error(keys, reason) do
+    keyed_error(Enum.into(keys, []), reason)
+  end
+
+  defp decode_and_cas(message, options) do
+    value = Coder.decode(options[:coder], message.extras[:flags], message.value)
+    if options[:cas] do
+      {value, message.cas}
+    else
+      value
     end
   end
 

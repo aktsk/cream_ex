@@ -1,231 +1,132 @@
 defmodule Cream.Client do
-  @moduledoc """
-  Client for memcached's ascii/text protocol.
 
-  This is meant to be used with a reverse proxy, thus you cannot connect to multiple
-  memcached servers with this client.
-
-  Recommended reverse proxies:
-   * [mcrouter](https://github.com/facebook/mcrouter)
-   * [twemproxy](https://github.com/twitter/twemproxy)
-   * [dynomite](https://github.com/Netflix/dynomite)
-
-  ## Basic usage
-
-  ```elixir
-  {:ok, client} = Cream.Client.start_link # Use defaults
-  {:ok, :stored} = Cream.Client.set(client, "name", "Callie")
-  {:ok, "Callie"} = Cream.Client.get(client, "name")
-  ```
-
-  ## Module usage
-
-  ```elixir
-  defmodule YourClient do
-   use Cream.Client, otp_app: :your_app
-  end
-
-  use Mix.Config
-  config :your_app, YourClient, [] # Use defaults
-
-  YourClient.start_link
-  {:ok, :stored} = YourClient.set("name", "Callie")
-  {:ok, "Callie"} = YourClient.get("name")
-  ```
-
-  ## Configuration
-
-  For all configuration options, see `t:config/0`.
-
-  When using a module, you can do compile time configuration via `Mix.Config`.
-  ```elixir
-  use Mix.Config
-  config :your_app, YourClient,
-    server: "memcached-proxy.company.com",
-    pool: 10
-  ```
-
-  And/or you can do runtime configuration via the `c:init/1` callback.
-  ```
-  defmodule YourClient do
-    use Cream.Client, otp_app: :your_app
-
-    def init(config) do
-      config = config
-      |> Keyword.put(:server, "memcached-proxy.company.com")
-      |> Keyword.put(:pool, 10)
-      {:ok, config}
-    end
-  end
-  ```
-  """
-
-  @typedoc """
-  Configuration options.
-
-  Defaults:
-  ```elixir
-  [
-    server: "localhost:11211",
-    pool: 5,
-    ttl: 0,
-    namespace: nil
-  ]
-  ```
-  """
-  @type config :: Keyword.t
-  @typedoc """
-  Error reason.
-
-  It's a string. Pretty easy.
-  """
-  @type reason :: String.t
-
+  @type client :: GenServer.t
   @type key :: String.t
-
   @type value :: binary
-
-  @type keys_and_values :: %{required(key) => value} | [{key, value}]
+  @type keys_and_values :: [{key, value}]
+  @type options :: Keyword.t
+  @type storage_result :: :stored | :not_stored | :exists | :not_found
+  @type storage_results :: %{
+    optional(storage_result) => [key],
+    optional(:error) => %{
+      reason => [key]
+    }
+  }
+  @type reason :: String.t
 
   defmacro __using__(opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
 
+      @module Cream.Client
       @otp_app opts[:otp_app]
 
       def init(config), do: {:ok, config}
       defoverridable [init: 1]
 
-      def start_link(config \\ []) do
-        Cream.Client.start_link(__MODULE__, @otp_app, config)
-      end
+      def start_link(options \\ []), do: @module.start_link(__MODULE__, @otp_app, options)
 
-      def defaults, do: Cream.Client.defaults(__MODULE__)
+      def debug, do: @module.debug(__MODULE__)
+      def options, do: @module.options(__MODULE__)
 
-      def get(key_or_keys, opts \\ []), do: Cream.Client.get(__MODULE__, key_or_keys, opts)
-      def get!(key_or_keys, opts \\ []), do: Cream.Client.get!(__MODULE__, key_or_keys, opts)
+      def get(key_or_keys, opts \\ []), do: @module.get(__MODULE__, key_or_keys, opts)
+      def get!(key_or_keys, opts \\ []), do: @module.get!(__MODULE__, key_or_keys, opts)
 
-      def set(keys_and_values, opts \\ []), do: Cream.Client.set(__MODULE__, keys_and_values, opts)
-      def set!(keys_and_values, opts \\ []), do: Cream.Client.set!(__MODULE__, keys_and_values, opts)
+      def set(keys_and_values, opts \\ []), do: @module.set(__MODULE__, keys_and_values, opts)
+      def set!(keys_and_values, opts \\ []), do: @module.set!(__MODULE__, keys_and_values, opts)
 
-      def add(keys_and_values, opts \\ []), do: Cream.Client.add(__MODULE__, keys_and_values, opts)
-      def add!(keys_and_values, opts \\ []), do: Cream.Client.add!(__MODULE__, keys_and_values, opts)
+      def add(keys_and_values, opts \\ []), do: @module.add(__MODULE__, keys_and_values, opts)
+      def add!(keys_and_values, opts \\ []), do: @module.add!(__MODULE__, keys_and_values, opts)
 
-      def replace(keys_and_values, opts \\ []), do: Cream.Client.replace(__MODULE__, keys_and_values, opts)
-      def replace!(keys_and_values, opts \\ []), do: Cream.Client.replace!(__MODULE__, keys_and_values, opts)
+      def replace(keys_and_values, opts \\ []), do: @module.replace(__MODULE__, keys_and_values, opts)
+      def replace!(keys_and_values, opts \\ []), do: @module.replace!(__MODULE__, keys_and_values, opts)
 
-      def delete(keys, opts \\[]), do: Cream.Client.delete(__MODULE__, keys, opts)
-      def delete!(keys, opts \\[]), do: Cream.Client.delete!(__MODULE__, keys, opts)
+      def delete(keys, opts \\[]), do: @module.delete(__MODULE__, keys, opts)
+      def delete!(keys, opts \\[]), do: @module.delete!(__MODULE__, keys, opts)
 
-      def flush(opts \\ []), do: Cream.Client.flush(__MODULE__, opts)
+      def flush(opts \\ []), do: @module.flush(__MODULE__, opts)
 
     end
   end
-
-  @doc """
-  Callback for runtime/dynamic configuration.
-
-  ```
-  defmodule YourClient do
-    use Cream.Client, otp_app: :your_app
-
-    def init(config) do
-      config = config
-      |> Keyword.put(:server, "memcached-proxy.company.com")
-      |> Keyword.put(:pool, 10)
-      {:ok, config}
-    end
-  end
-  ```
-  """
-  @callback init(config) :: {:ok, config} | {:error, reason}
 
   @defaults [
     server: "localhost:11211",
     pool: 5,
-    ttl: 0
+    ttl: 0,
+    protocol: :binary
   ]
-  def start_link(opts \\ [], gen_opts \\ []) do
-    opts = Keyword.merge(@defaults, opts)
 
-    poolboy_config = [
-      worker_module: Cream.Worker.Client,
-      size: opts[:pool]
-    ]
+  def start_link(options \\ []) do
+    {options, gs_options} =
+      @defaults
+      |> Keyword.merge(options)
+      |> Enum.split_with(fn {key, _value} ->
+        Keyword.has_key?(@defaults, key)
+      end)
 
-    poolboy_config = if gen_opts[:name] do
-      Keyword.put(poolboy_config, :name, {:local, gen_opts[:name]})
+    if options[:servers] do
+      Cream.Worker.Client.start_link(options, gs_options)
     else
-      poolboy_config
-    end
-
-    :poolboy.start_link(poolboy_config, opts)
-  end
-
-  @doc false
-  def start_link(mod, otp_app, opts) do
-    config = Application.get_env(otp_app, mod)
-    with {:ok, config} <- mod.init(config) do
-      Keyword.merge(config, opts) |> start_link(name: mod)
+      Cream.Worker.Connection.start_link(options, gs_options)
     end
   end
 
-  def defaults(pool) do
-    call(pool, :defaults)
+  def start_link(module, otp_app, options) do
+    config = Application.get_env(otp_app, module)
+    with {:ok, config} <- module.init(config) do
+      Keyword.merge(config, options)
+      |> Keyword.put(:name, module)
+      |> start_link
+    end
   end
 
-  def set(pool, keys_and_values, options \\ []) do
-    call(pool, {:set, keys_and_values, options})
+  def debug(client) do
+    GenServer.call(client, :debug)
   end
 
-  def set!(pool, keys_and_values, options \\ []) do
-    set(pool, keys_and_values, options) |> bang
+  def options(client) do
+    GenServer.call(client, :options)
   end
 
-  def add(pool, keys_and_values, options \\ []) do
-    call(pool, {:add, keys_and_values, options})
+  @spec set(client, {key, value}, options) :: {:ok, storage_result} | {:error, reason}
+  @spec set(client, keys_and_values, options) :: {:ok, storage_results} | {:error, storage_results}
+  def set(client, keys_and_values, options \\ []) do
+    store(client, :set, keys_and_values, options)
   end
 
-  def add!(pool, keys_and_values, options \\ []) do
-    add(pool, keys_and_values, options) |> bang
+  def add(client, keys_and_values, options \\ []) do
+    store(client, :add, keys_and_values, options)
   end
 
-  def replace(pool, keys_and_values, options \\ []) do
-    call(pool, {:replace, keys_and_values, options})
+  def get(client, keys, options \\ []) do
+    retrieve(client, :get, keys, options)
   end
 
-  def replace!(pool, keys_and_values, options \\ []) do
-    replace(pool, keys_and_values, options) |> bang
+  def delete(client, keys, options \\ []) do
+    GenServer.call(client, {:delete, keys, options})
   end
 
-  def get(pool, keys, options \\ []) do
-    call(pool, {:get, keys, options})
+  def flush(client, options \\ []) do
+    GenServer.call(client, {:flush, options})
   end
 
-  def get!(pool, keys, options \\ []) do
-    get(pool, keys, options) |> bang
+  defp retrieve(client, cmd, key, options) when is_binary(key) do
+    case retrieve(client, cmd, [key], options) do
+      {status, %{^key => value}} -> {status, value}
+      {status, %{}} -> {status, nil}
+    end
   end
 
-  def delete(pool, keys, options \\ []) do
-    call(pool, {:delete, keys, options})
+  defp retrieve(client, cmd, keys, options) when is_list(keys) do
+    GenServer.call(client, {cmd, keys, options})
   end
 
-  def delete!(pool, keys, options \\ []) do
-    delete(pool, keys, options) |> bang
+  defp store(client, cmd, {key, value}, options) do
+    {status, results} = store(client, cmd, [{key, value}], options)
+    {status, results |> Map.keys |> List.first}
   end
 
-  def flush(pool, options \\ []) do
-    call(pool, {:flush, options})
-  end
-
-  defp bang({:ok, values}), do: values
-  defp bang({:error, reasons}), do: raise(reasons)
-
-  defp call(pool, arg) do
-    with_client(pool, &GenServer.call(&1, arg))
-  end
-
-  defp with_client(pool, f) do
-    :poolboy.transaction(pool, f)
+  defp store(client, cmd, keys_and_values, options) do
+    GenServer.call(client, {cmd, keys_and_values, options})
   end
 
 end

@@ -26,7 +26,7 @@ defmodule Cream.Protocol.Binary.Message do
   @magic_response 0x81
 
   alias Cream.Protocol.Binary.Opcode
-  import Cream.Helper
+  import Cream.Utils, only: [iolist_append: 2, bytes: 1]
 
   def new(opcode, fields \\ []) do
     fields = case fields[:value] do
