@@ -12,8 +12,8 @@ defmodule Cream.Protocol.Binary.Command.Set do
     ttl = options[:ttl]
     flags = options[:flags]
 
-    with :ok <- Packet.send(conn, op: :set, key: key, value: value, extras: [expiration: ttl, flags: flags]),
-      {:ok, packet} <- Packet.recv(conn)
+    with :ok <- Packet.Set.send(conn, key: key, value: value, extras: [expiration: ttl, flags: flags]),
+      {:ok, packet} <- Packet.Set.recv(conn)
     do
       case Status.to_atom(packet.header.status) do
         nil -> :ok
