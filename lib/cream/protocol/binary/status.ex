@@ -1,4 +1,4 @@
-defmodule Cream.Protocol.Binary.Error do
+defmodule Cream.Protocol.Binary.Status do
   @statuses [
     {0x0000,  nil},
     {0x0001, :not_found},

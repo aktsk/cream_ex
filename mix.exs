@@ -3,8 +3,8 @@ defmodule Cream.Mixfile do
 
   def project do
     [app: :cream,
-     version: "0.2.0",
-     elixir: "~> 1.4",
+     version: "0.3.0",
+     elixir: "~> 1.5",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
      elixirc_paths: elixirc_paths(Mix.env),
@@ -62,11 +62,11 @@ defmodule Cream.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [
-      {:memcachex, ">= 0.4.0"},
       {:uuid, "~> 1.1"},
-      {:poison, ">= 2.0.0"},
+      {:jason, "~> 1.1"},
       {:poolboy, "~> 1.5"},
-      {:instrumentation, ">= 0.1.0"},
+      {:socket, "~> 0.3"},
+      {:connection, "~> 1.0"},
       {:ex_doc, "~> 0.0", only: :dev},
       {:ex_marshal, "> 0.0.0", only: :test}
     ]
