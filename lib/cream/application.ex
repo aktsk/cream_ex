@@ -8,7 +8,6 @@ defmodule Cream.Application do
 
     children = [
       worker(Registry, [:unique, Cream.Registry]),
-      Cream.Protocol.Binary.Opcode
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one)

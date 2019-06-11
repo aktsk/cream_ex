@@ -2,73 +2,8 @@ defmodule Cream.Protocol.Binary.Packet do
 
   defstruct [:header, :body]
 
-  defmacro __using__(_opts) do
-    quote do
-      @opcode nil
-      @request []
-      @response []
-
-      @before_compile Cream.Protocol.Binary.Packet
-    end
-  end
-
-  defmacro __before_compile__(_env) do
-    quote do
-
-      @specification %{
-        module: __MODULE__,
-        opcode: @opcode,
-        request: %{
-          extras: @request[:extras] || []
-        },
-        response: %{
-          extras: @response[:extras] || []
-        }
-      }
-
-      def specification do
-        @specification
-      end
-
-      def new(options \\ []) do
-        Cream.Protocol.Binary.Packet.new(@specification, options)
-      end
-
-      def send(conn, options \\ []) do
-        Cream.Protocol.Binary.Packet.send(conn, @specification, options)
-      end
-
-      def recv(conn) do
-        Cream.Protocol.Binary.Packet.recv(conn, @specification)
-      end
-    end
-  end
-
   @request_magic 0x80
   @response_magic 0x81
-
-  def send(conn, specification, options) do
-    iodata = new(specification, options) |> serialize()
-    Cream.Connection.send(conn, iodata)
-  end
-
-  def recv(conn, specification) do
-    with {:ok, header} <- deserialize_header(conn),
-      {:ok, body} <- deserialize_body(conn, specification, header)
-    do
-      packet = %__MODULE__{header: header, body: body}
-      {:ok, packet}
-    end
-  end
-
-  def recv(conn) do
-    with {:ok, header} <- deserialize_header(conn),
-      {:ok, body} <- deserialize_body(conn, header)
-    do
-      packet = %__MODULE__{header: header, body: body}
-      {:ok, packet}
-    end
-  end
 
   @default_request_header %{
     magic: @request_magic,
@@ -84,25 +19,16 @@ defmodule Cream.Protocol.Binary.Packet do
     extras: []
   }
 
-  def new(specification, options) do
-    options = Map.new(options)
+  alias Cream.Protocol.Binary.Opcode
 
-    header_options = Map.take(options, [:data_type, :vbucket_id, :opaque, :cas])
-    body_options = Map.take(options, [:key, :value, :extras])
+  def new(options \\ []) do
+    header_options = options[:header] || %{}
+    body_options = options[:body] || %{}
 
-    header = Map.merge(@default_request_header, header_options)
-    |> Map.put(:opcode, specification.opcode)
-
-    body = Map.merge(@default_request_body, body_options)
-
-    extras = Enum.map specification.request.extras, fn {name, size} ->
-      value = body.extras[name] || 0
-      {name, size, value}
-    end
-
-    body = put_in(body.extras, extras)
-
-    %__MODULE__{header: header, body: body}
+    %__MODULE__{
+      header: Map.merge(@default_request_header, header_options),
+      body: Map.merge(@default_request_body, body_options)
+    }
   end
 
   def serialize(packet) do
@@ -111,9 +37,11 @@ defmodule Cream.Protocol.Binary.Packet do
     header = packet.header
     body = packet.body
 
+    extras_formats = Opcode.get_specification(header.opcode).request.extras
+
     key = body.key || ""
     value = body.value || ""
-    extras = serialize_extras(body.extras)
+    extras = serialize_extras(body.extras, extras_formats)
 
     key_length    = byte_size(key)
     extras_length = IO.iodata_length(extras)
@@ -138,81 +66,73 @@ defmodule Cream.Protocol.Binary.Packet do
     ]
   end
 
-  defp serialize_extras(extras) do
-    Enum.map extras, fn {_name, size, value} ->
+  defp serialize_extras(extras, extras_formats) do
+    Enum.map extras_formats, fn {name, size} ->
       bits = size * 8
+      value = extras[name] || 0
       <<value :: size(bits) >>
     end
   end
 
-  defp deserialize_header(conn) do
+  def deserialize_header(data) do
     import Cream.Utils, only: [bytes: 1]
 
-    with {:ok, data} <- Cream.Connection.recv(conn, 24) do
-      <<
-        @response_magic   :: bytes(1),
-        opcode            :: bytes(1),
-        key_length        :: bytes(2),
-        extras_length     :: bytes(1),
-        data_type         :: bytes(1),
-        status            :: bytes(2),
-        total_body_length :: bytes(4),
-        opaque            :: bytes(4),
-        cas               :: bytes(8)
-      >> = data
+    <<
+      @response_magic   :: bytes(1),
+      opcode            :: bytes(1),
+      key_length        :: bytes(2),
+      extras_length     :: bytes(1),
+      data_type         :: bytes(1),
+      status            :: bytes(2),
+      total_body_length :: bytes(4),
+      opaque            :: bytes(4),
+      cas               :: bytes(8)
+    >> = data
 
-      header = %{
-        magic:              @response_magic,
-        opcode:             opcode,
-        key_length:         key_length,
-        extras_length:      extras_length,
-        data_type:          data_type,
-        status:             status,
-        total_body_length:  total_body_length,
-        opaque:             opaque,
-        cas:                cas
-      }
-
-      {:ok, header}
-    end
+    %{
+      magic:              @response_magic,
+      opcode:             opcode,
+      key_length:         key_length,
+      extras_length:      extras_length,
+      data_type:          data_type,
+      status:             status,
+      total_body_length:  total_body_length,
+      opaque:             opaque,
+      cas:                cas
+    }
   end
 
-  defp deserialize_body(conn, header) do
-    module = Cream.Protocol.Binary.Opcode.get_module(header.opcode)
-    deserialize_body(conn, module.specification, header)
+  def deserialize_body(header, data) do
+    specification = Opcode.get_specification(header.opcode)
+    deserialize_body(header, data, specification.response.extras)
   end
 
-  defp deserialize_body(_conn, _specification, %{total_body_length: 0}), do: {:ok, nil}
-  defp deserialize_body(conn, specification, header) do
-    with {:ok, data} <- Cream.Connection.recv(conn, header.total_body_length) do
-      extras_length = header.extras_length
-      key_length = header.key_length
+  def deserialize_body(header, data, extras_formats) do
+    extras_length = header.extras_length
+    key_length = header.key_length
 
-      <<
-        extras :: binary-size(extras_length),
-        key :: binary-size(key_length),
-        value :: binary
-      >> = data
+    <<
+      extras :: binary-size(extras_length),
+      key :: binary-size(key_length),
+      value :: binary
+    >> = data
 
-      body = %{
-        extras: deserialize_extras(specification, extras),
-        key: if(key == "", do: nil, else: key),
-        value: if(value == "", do: nil, else: value)
-      }
-
-      {:ok, body}
-    end
+    %{
+      extras: deserialize_extras(extras, extras_formats),
+      key: if(key == "", do: nil, else: key),
+      value: if(value == "", do: nil, else: value)
+    }
   end
 
-  defp deserialize_extras(specification, data) do
-    deserialize_extras(specification.response.extras, data, [])
+  defp deserialize_extras(data, extras_formats) do
+    deserialize_extras(data, extras_formats, [])
   end
 
-  defp deserialize_extras(_extras_specification, "", acc), do: acc
-  defp deserialize_extras([{name, size} | extras_specification], data, acc) do
+  defp deserialize_extras("", _extras_formats, acc), do: acc
+  defp deserialize_extras(data, [{name, size} | extras_formats], acc) do
     bits = size * 8
     <<value :: size(bits), data :: binary>> = data
-    deserialize_extras(extras_specification, data, [{name, value} | acc])
+    deserialize_extras(data, extras_formats, [{name, value} | acc])
   end
 
 end

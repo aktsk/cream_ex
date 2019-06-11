@@ -1,6 +1,6 @@
-defmodule Cream.Protocol.Binary.Command.Set do
+defmodule Cream.Protocol.Binary.Api.Set do
 
-  alias Cream.Protocol.Binary.{Packet, Status}
+  alias Cream.Protocol.Binary.{Wire, Status}
 
   @defaults [
     ttl: 0,
@@ -12,8 +12,8 @@ defmodule Cream.Protocol.Binary.Command.Set do
     ttl = options[:ttl]
     flags = options[:flags]
 
-    with :ok <- Packet.Set.send(conn, key: key, value: value, extras: [expiration: ttl, flags: flags]),
-      {:ok, packet} <- Packet.Set.recv(conn)
+    with :ok <- Wire.Set.send(conn, key: key, value: value, extras: [expiration: ttl, flags: flags]),
+      {:ok, packet} <- Wire.recv(conn)
     do
       case Status.to_atom(packet.header.status) do
         nil -> :ok

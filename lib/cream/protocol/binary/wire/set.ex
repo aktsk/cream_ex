@@ -1,5 +1,5 @@
-defmodule Cream.Protocol.Binary.Packet.Set do
-  use Cream.Protocol.Binary.Packet
+defmodule Cream.Protocol.Binary.Wire.Set do
+  use Cream.Protocol.Binary.Wire
 
   @opcode 0x01
 
