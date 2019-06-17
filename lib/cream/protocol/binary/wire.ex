@@ -34,6 +34,10 @@ defmodule Cream.Protocol.Binary.Wire do
         @specification
       end
 
+      def opcode do
+        @specification.opcode
+      end
+
       def new_packet(options \\ []) do
         Cream.Protocol.Binary.Wire.new_packet(__MODULE__, options)
       end

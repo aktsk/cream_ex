@@ -4,7 +4,9 @@ defmodule Cream.Protocol.Binary.Opcode do
 
   @opcode_map %{
     0x00 => Wire.Get,
-    0x01 => Wire.Set
+    0x01 => Wire.Set,
+    0x0d => Wire.Getkq,
+    0x0a => Wire.Noop,
   }
 
   def get_module(opcode) do
