@@ -1,15 +1,14 @@
 defmodule Cream.Connection do
-  defstruct [:host, :port, :protocol, :socket]
+  defstruct [:host, :port, :socket]
   use Connection
 
   @defaults [
     host: "localhost",
-    port: 11211,
-    protocol: :ascii
+    port: 11211
   ]
 
   def start_link(args \\ [], opts \\ []) do
-    Connection.start_link(__MODULE__, Keyword.merge(args, @defaults), opts)
+    Connection.start_link(__MODULE__, Keyword.merge(@defaults, args), opts)
   end
 
   def send(conn, data) do
