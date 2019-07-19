@@ -1,6 +1,6 @@
 defmodule Cream.Protocol.Binary.Packet do
 
-  defstruct [:specification, :header, :body]
+  defstruct [:info, :header, :body]
 
   @request_magic 0x80
   @response_magic 0x81
@@ -23,7 +23,7 @@ defmodule Cream.Protocol.Binary.Packet do
 
   @body_keys [:key, :value, :extras]
 
-  @specifications [
+  @info [
     # {opcode, name, request_extras, response_extras}
     {0x00, :get,    [],                         [flags: 4]},
     {0x01, :set,    [flags: 4, expiration: 4],  []},
@@ -31,18 +31,18 @@ defmodule Cream.Protocol.Binary.Packet do
     {0x0d, :getkq,  [],                         [flags: 4]},
   ]
 
-  @specifications_by_opcode Enum.reduce(@specifications, %{}, fn spec, acc ->
+  @info_by_opcode Enum.reduce(@info, %{}, fn spec, acc ->
     {opcode, name, request_extras, response_extras} = spec
     Map.put(acc, opcode, %{opcode: opcode, name: name, request_extras: request_extras, response_extras: response_extras})
   end)
 
-  @specifications_by_name Enum.reduce(@specifications, %{}, fn spec, acc ->
+  @info_by_name Enum.reduce(@info, %{}, fn spec, acc ->
     {opcode, name, request_extras, response_extras} = spec
     Map.put(acc, name, %{opcode: opcode, name: name, request_extras: request_extras, response_extras: response_extras})
   end)
 
-  def new(opcode, options) do
-    specification = specification(opcode)
+  def new(opcode, options \\ []) do
+    info = info(opcode)
 
     header_options = Keyword.take(options, @header_keys)
     |> Map.new
@@ -51,13 +51,13 @@ defmodule Cream.Protocol.Binary.Packet do
     |> Map.new
 
     %__MODULE__{
-      specification: specification,
+      info: info,
       header: Map.merge(@default_request_header, header_options),
       body: Map.merge(@default_request_body, body_options)
     }
   end
 
-  def send(conn, opcode, options) do
+  def send(conn, opcode, options \\ []) do
     iodata = new(opcode, options) |> serialize()
     Cream.Connection.send(conn, iodata)
   end
@@ -69,8 +69,7 @@ defmodule Cream.Protocol.Binary.Packet do
     do
       {:ok, deserialize_body(packet, data)}
     else
-      %{total_body_length: 0} = header ->
-        {:ok, %__MODULE__{header: header}}
+      %{header: %{total_body_length: 0}} = packet -> {:ok, packet}
       error -> error
     end
   end
@@ -78,13 +77,13 @@ defmodule Cream.Protocol.Binary.Packet do
   def serialize(packet) do
     import Cream.Utils, only: [bytes: 1]
 
-    specification = packet.specification
+    info = packet.info
     header = packet.header
     body = packet.body
 
     key = body.key || ""
     value = body.value || ""
-    extras = serialize_extras(body.extras, specification.request_extras)
+    extras = serialize_extras(body.extras, info.request_extras)
 
     key_length    = byte_size(key)
     extras_length = IO.iodata_length(extras)
@@ -94,7 +93,7 @@ defmodule Cream.Protocol.Binary.Packet do
 
     [
       <<header.magic          :: bytes(1)>>,
-      <<specification.opcode  :: bytes(1)>>,
+      <<info.opcode  :: bytes(1)>>,
       <<key_length            :: bytes(2)>>,
       <<extras_length         :: bytes(1)>>,
       <<header.data_type      :: bytes(1)>>,
@@ -145,13 +144,13 @@ defmodule Cream.Protocol.Binary.Packet do
     }
 
     %__MODULE__{
-      specification: specification(opcode),
+      info: info(opcode),
       header: header
     }
   end
 
   def deserialize_body(packet, data) do
-    response_extras = packet.specification.response_extras
+    response_extras = packet.info.response_extras
     extras_length = packet.header.extras_length
     key_length = packet.header.key_length
 
@@ -181,11 +180,11 @@ defmodule Cream.Protocol.Binary.Packet do
     deserialize_extras(data, extras_formats, [{name, value} | acc])
   end
 
-  defp specification(opcode) when is_integer(opcode) do
-    @specifications_by_opcode[opcode]
+  defp info(opcode) when is_integer(opcode) do
+    @info_by_opcode[opcode]
   end
 
-  defp specification(name) when is_atom(name) do
-    @specifications_by_name[name]
+  defp info(name) when is_atom(name) do
+    @info_by_name[name]
   end
 end

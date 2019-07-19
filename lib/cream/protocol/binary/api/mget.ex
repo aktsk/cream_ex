@@ -1,10 +1,10 @@
 defmodule Cream.Protocol.Binary.Api.Mget do
 
-  alias Cream.Protocol.Binary.{Wire, Status}
+  alias Cream.Protocol.Binary.{Packet, Status}
 
   def call(conn, keys, options \\ []) do
     with :ok <- send_requests(conn, keys),
-      :ok <- Wire.Noop.send(conn),
+      :ok <- Packet.send(conn, :noop),
       {:ok, results} <- recv_responses(conn, options)
     do
       results
@@ -13,7 +13,7 @@ defmodule Cream.Protocol.Binary.Api.Mget do
 
   defp send_requests(conn, keys) do
     Enum.reduce_while(keys, :ok, fn key, _acc ->
-      case Wire.Getkq.send(conn, key: key) do
+      case Packet.send(conn, :getkq, key: key) do
         :ok -> {:cont, :ok}
         error -> {:halt, error}
       end
@@ -21,10 +21,10 @@ defmodule Cream.Protocol.Binary.Api.Mget do
   end
 
   defp recv_responses(conn, options) do
-    Stream.repeatedly(fn -> Wire.recv(conn) end)
+    Stream.repeatedly(fn -> Packet.recv(conn) end)
     |> Enum.reduce_while(%{}, fn
       {:error, _error}, _acc = error -> {:halt, error}
-      {:ok, packet}, acc -> if packet.header.opcode == Wire.Noop.opcode do
+      {:ok, packet}, acc -> if packet.info.name == :noop do
         {:halt, acc}
       else
         case Status.to_atom(packet.header.status) do
