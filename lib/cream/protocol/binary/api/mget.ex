@@ -4,10 +4,9 @@ defmodule Cream.Protocol.Binary.Api.Mget do
 
   def call(conn, keys, options \\ []) do
     with :ok <- send_requests(conn, keys),
-      :ok <- Packet.send(conn, :noop),
-      {:ok, results} <- recv_responses(conn, options)
+      :ok <- Packet.send(conn, :noop)
     do
-      results
+      recv_responses(conn, options)
     end
   end
 
@@ -22,14 +21,18 @@ defmodule Cream.Protocol.Binary.Api.Mget do
 
   defp recv_responses(conn, options) do
     Stream.repeatedly(fn -> Packet.recv(conn) end)
-    |> Enum.reduce_while(%{}, fn
-      {:error, _error}, _acc = error -> {:halt, error}
+    |> Enum.reduce_while([], fn
+      {:error, _error} = error, _acc -> {:halt, error}
       {:ok, packet}, acc -> if packet.info.name == :noop do
-        {:halt, acc}
+        {:halt, {:ok, Enum.reverse(acc)}}
       else
         case Status.to_atom(packet.header.status) do
-          nil -> {:cont, Map.put(acc, packet.body.key, value(packet, options))}
-          error -> {:cont, Map.put(acc, packet.body.key, {:error, error})}
+          nil ->
+            item = {packet.body.key, value(packet, options)}
+            {:cont, [item | acc]}
+          error ->
+            item = {packet.body.key, {:error, error}}
+            {:cont, [item | acc]}
         end
       end
     end)

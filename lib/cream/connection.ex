@@ -1,6 +1,8 @@
 defmodule Cream.Connection do
-  defstruct [:host, :port, :socket]
+  defstruct [:server, :socket]
   use Connection
+
+  require Logger
 
   @defaults [
     host: "localhost",
@@ -20,13 +22,37 @@ defmodule Cream.Connection do
   end
 
   def init(args) do
-    {:connect, :init, struct!(__MODULE__, args)}
+    server = case Map.new(args) do
+      %{server: server} -> server
+      %{host: host, port: port} -> "#{host}:#{port}"
+    end
+    {:connect, :init, %__MODULE__{server: server}}
   end
 
   def connect(_info, state) do
-    case Socket.connect("tcp://#{state.host}:#{state.port}") do
-      {:ok, socket} -> {:ok, %{state | socket: socket}}
+    case Socket.connect("tcp://#{state.server}") do
+      {:ok, socket} ->
+        Logger.debug "Connection established to #{state.server}"
+        state = %{state | socket: socket}
+        {:ok, state}
+      {:error, reason} ->
+        reason = :inet.format_error(reason)
+        Logger.warn "Connection failed to #{state.server} (#{reason})"
+        {:backoff, 1000, state}
     end
+  end
+
+  def disconnect(info, state) do
+    :ok = Socket.close(state.socket)
+    state = %{state | socket: nil}
+
+    case info do
+      {:error, reason} ->
+        reason = :inet.format_error(reason)
+        Logger.warn("Disconnected #{state.server} (#{reason})")
+    end
+
+    {:connect, :reconnect, state}
   end
 
   def handle_call(_, _, %{socket: nil} = state) do
@@ -40,10 +66,11 @@ defmodule Cream.Connection do
     end
   end
 
-  def handle_call({:recv, bytes, timeout}, _from, state) do
+  def handle_call({:recv, bytes, timeout}, from, state) do
     bytes = normalize_bytes(bytes, state.socket)
 
     case Socket.Stream.recv(state.socket, bytes, timeout: timeout) do
+      {:ok, nil} -> handle_call({:recv, bytes, timeout}, from, state)
       {:ok, _data} = ok -> {:reply, ok, state}
       {:error, :timeout} = timeout -> {:reply, timeout, state}
       {:error, _reason} = error -> {:disconnect, error, error, state}
