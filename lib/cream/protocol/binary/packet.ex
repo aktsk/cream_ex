@@ -1,4 +1,26 @@
 defmodule Cream.Protocol.Binary.Packet do
+  @moduledoc """
+  Send and receive Memcached packets.
+
+  This is for very low level communication with Memcached using a raw `Cream.Connection`.
+  You probably want `Cream.Client` instead of this.
+
+  The Memcached binary protocol is described here:
+  [https://github.com/memcached/memcached/wiki/BinaryProtocolRevamped](https://github.com/memcached/memcached/wiki/BinaryProtocolRevamped)
+
+  A packet consists of a header and a body. The contents of each depend on the type of packet (its
+  opcode) and whether it is a request or response packet.
+
+  This module does not implement all the different opcodes; only the ones needed by the
+  higher level `Cream.Client` API. It is trivial to implement more; see the `@info` module
+  attribute in the source code.
+  """
+
+  @type t :: %__MODULE__{info: Map.t, header: Map.t, body: Map.t}
+  @type conn :: Cream.Connection.t
+  @type opcode :: integer | atom
+  @type options :: Keyword.t
+  @type reason :: binary | atom
 
   defstruct [:info, :header, :body]
 
@@ -41,6 +63,37 @@ defmodule Cream.Protocol.Binary.Packet do
     Map.put(acc, name, %{opcode: opcode, name: name, request_extras: request_extras, response_extras: response_extras})
   end)
 
+  @doc """
+  Create a new packet.
+
+  `opcode` can be an integer or a symbol.
+
+  `options` is a keyword list that the header and body will be created from.
+
+  Header options are
+    * `:data_type`
+    * `:vbucket_id`
+    * `:opaque`
+    * `:cas` - Integer
+
+  Body options are
+    * `:key`
+    * `:value`
+    * `:extras` - Keyword list of extras (like flags, expiration, etc)
+
+  ## Examples
+  ```elixir
+  new(conn, :get, key: "foo")
+  new(conn, :set, key: "foo", value: "bar", extras: [expiration: 60])
+  ```
+
+  You really have to understand the Memcached binary protocol _and_ this module's `@info`
+  attribute for any of this to make sense.
+
+  There's really no reason to create a packet without sending it across the wire.
+  See `send/3` for something actually useful.
+  """
+  @spec new(opcode, options) :: t
   def new(opcode, options \\ []) do
     info = info(opcode)
 
@@ -57,11 +110,30 @@ defmodule Cream.Protocol.Binary.Packet do
     }
   end
 
+  @doc """
+  Build a packet and send it across a `Cream.Connection`.
+
+  Convenience function for:
+  ```elixir
+  iodata = new(opcode, options) |> serialize()
+  Cream.Connection.send(conn, iodata)
+  ```
+  """
+  @spec send(conn, opcode, options) :: :ok | {:error, reason}
   def send(conn, opcode, options \\ []) do
     iodata = new(opcode, options) |> serialize()
     Cream.Connection.send(conn, iodata)
   end
 
+  @doc """
+  Receive and deserialize a packet.
+
+  ## Examples
+  ```elixir
+  %Packet{} = recv(conn)
+  ```
+  """
+  @spec recv(conn) :: t
   def recv(conn) do
     with {:ok, data} <- Cream.Connection.recv(conn, 24),
       %{header: %{total_body_length: size}} = packet when size > 0 <- deserialize_header(data),
@@ -74,6 +146,7 @@ defmodule Cream.Protocol.Binary.Packet do
     end
   end
 
+  @doc false
   def serialize(packet) do
     import Cream.Utils, only: [bytes: 1]
 
@@ -116,7 +189,7 @@ defmodule Cream.Protocol.Binary.Packet do
     end
   end
 
-  def deserialize_header(data) do
+  defp deserialize_header(data) do
     import Cream.Utils, only: [bytes: 1]
 
     <<
@@ -149,7 +222,7 @@ defmodule Cream.Protocol.Binary.Packet do
     }
   end
 
-  def deserialize_body(packet, data) do
+  defp deserialize_body(packet, data) do
     response_extras = packet.info.response_extras
     extras_length = packet.header.extras_length
     key_length = packet.header.key_length
