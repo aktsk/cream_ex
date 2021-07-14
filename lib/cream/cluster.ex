@@ -83,6 +83,9 @@ defmodule Cream.Cluster do
   """
   @type config :: Keyword.t
 
+  @poolboy_timeout 5000
+  @command_timeout @poolboy_timeout + 1000
+
   defmacro __using__(opts) do
     quote location: :keep, bind_quoted: [opts: opts] do
 
@@ -187,6 +190,16 @@ defmodule Cream.Cluster do
   * `:name` - Like name argument for `GenServer.start_link/3`. No default.
               Ignored if using module based cluster.
   * `:memcachex` - Keyword list passed through to `Memcache.start_link/2`
+  * `:failover` - If true, failover to another server if the main server for
+                  a key is down. Defaults to `true`.
+  * `:max_failures` - The server will be marked as down if the operation fails
+                      for the specified number of consecutive times with
+                      timeouts or connection failures.
+                      This is to not immediately mark a server down when
+                      there's a very slight network problem. Defaults to `2`.
+  * `:down_retry_delay` - When a server has been marked down, the server will
+                          be checked again for being alive after this number
+                          of seconds to avoid operation hangs. Defaults to `30`.
 
   ## Example
 
@@ -201,13 +214,19 @@ defmodule Cream.Cluster do
   @defaults [
     servers: ["localhost:11211"],
     pool: 5,
-    log: :debug
+    log: :debug,
+    failover: true,
+    max_failures: 2,
+    down_retry_delay: 30
   ]
   @spec start_link(Keyword.t) :: t
   def start_link(opts \\ []) do
     opts = @defaults
       |> Keyword.merge(opts)
       |> Keyword.update!(:servers, &Cream.Utils.normalize_servers/1)
+
+    {:ok, state} = Cream.Cluster.State.start_link(opts)
+    opts = Keyword.merge(opts, [state: state])
 
     poolboy_config = [
       worker_module: Cream.Supervisor.Cluster,
@@ -291,14 +310,14 @@ defmodule Cream.Cluster do
   set(cluster, %{k1 => v1, k2 => v2}, ttl: 300)
   ```
   """
- @spec set(t, item, Keyword.t()) :: :ok | {:error, reason}
- @spec set(t, items, Keyword.t()) :: %{required(key) => :ok | {:error, reason}}
- def set(cluster, item_or_items, opts \\ [])
+  @spec set(t, item, Keyword.t()) :: :ok | {:error, reason}
+  @spec set(t, items, Keyword.t()) :: %{required(key) => :ok | {:error, reason}}
+  def set(cluster, item_or_items, opts \\ [])
 
   def set(cluster, items, opts) when is_list(items) or is_map(items) do
     with_worker cluster, fn worker ->
       instrument "set", [items: items], fn ->
-        GenServer.call(worker, {:set, items, opts})
+        GenServer.call(worker, {:set, items, opts}, @command_timeout)
       end
     end
   end
@@ -330,7 +349,7 @@ defmodule Cream.Cluster do
   def get(cluster, keys, opts) do
     with_worker cluster, fn worker ->
       instrument "get", [keys: keys], fn ->
-        GenServer.call(worker, {:get, keys, opts})
+        GenServer.call(worker, {:get, keys, opts}, @command_timeout)
       end
     end
   end
@@ -403,7 +422,7 @@ defmodule Cream.Cluster do
   def delete(cluster, keys) when is_list(keys) do
     with_worker cluster, fn worker ->
       instrument "delete", [keys: keys], fn ->
-        GenServer.call(worker, {:delete, keys})
+        GenServer.call(worker, {:delete, keys}, @command_timeout)
       end
     end
   end
@@ -438,7 +457,7 @@ defmodule Cream.Cluster do
 
   def with_conn(cluster, keys, func) when is_list(keys) do
     with_worker cluster, fn worker ->
-      GenServer.call(worker, {:with_conn, keys, func})
+      GenServer.call(worker, {:with_conn, keys, func}, @command_timeout)
     end
   end
 
@@ -449,7 +468,7 @@ defmodule Cream.Cluster do
   def flush(cluster, opts \\ []) do
     with_worker cluster, fn worker ->
       instrument "flush", fn ->
-        GenServer.call(worker, {:flush, opts})
+        GenServer.call(worker, {:flush, opts}, @command_timeout)
       end
     end
   end
@@ -463,6 +482,15 @@ defmodule Cream.Cluster do
     end
   end
 
+  @doc false
+  # for internal connection checking
+  def noop(cluster, server_name) do
+    with_worker cluster, fn worker ->
+      GenServer.call(worker, {:noop, server_name}, @command_timeout)
+    end
+  end
+
+
   defp with_worker(cluster, func) do
     :poolboy.transaction cluster, fn supervisor ->
       supervisor
@@ -470,7 +498,6 @@ defmodule Cream.Cluster do
         |> Enum.find(& elem(&1, 0) == Cream.Cluster.Worker )
         |> elem(1)
         |> func.()
-    end
+    end, @poolboy_timeout
   end
-
 end
